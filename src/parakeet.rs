@@ -1233,7 +1233,8 @@ impl Parakeet {
         let started = Instant::now();
         let mut silence = Vec::new();
         pad_for_parakeet(&mut silence);
-        self.transcribe(&silence)
+        self.session
+            .prewarm(&silence, &self.options)
             .wrap_err("could not prewarm transcription model")?;
         tracing::info!(
             prewarm_ms = started.elapsed().as_millis(),
@@ -1328,6 +1329,47 @@ mod tests {
             assert_eq!(processed.text, "raw instruction");
             assert_eq!(processed.transformations, transformations);
         }
+    }
+
+    #[test]
+    #[ignore = "requires HEX_PREWARM_MODEL and HEX_PREWARM_WAV (synthetic Mandarin speech)"]
+    fn qwen_prewarm_with_saved_vocabulary_keeps_real_transcription_working() {
+        use crate::dictation::vocabulary::{self, VocabularyBoost, VocabularyEntry};
+
+        let model_path = PathBuf::from(std::env::var_os("HEX_PREWARM_MODEL").expect("model path"));
+        let wav_path = PathBuf::from(std::env::var_os("HEX_PREWARM_WAV").expect("fixture path"));
+        let entries = match std::env::var_os("HEX_PREWARM_SETTINGS_DIR") {
+            Some(path) => vocabulary::read_saved(&PathBuf::from(path)),
+            None => (0..62)
+                .map(|index| VocabularyEntry {
+                    term: format!("Project {index}"),
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        assert!(!entries.is_empty(), "the regression needs vocabulary");
+        vocabulary::apply(&entries, VocabularyBoost::Normal);
+        let selection = TranscriptionSelection {
+            model: TranscriptionModelId::Qwen3Asr06B,
+            language: "zh".into(),
+        };
+        let mut model = Parakeet::load_from(&model_path, false, Some(&selection)).unwrap();
+        assert!(!model.session.ran_recently());
+        model.prewarm().expect("silent prewarm must not fail");
+        assert!(model.session.ran_recently());
+        assert_eq!(vocabulary::entries(), entries, "prewarm keeps saved terms");
+        let mut wav = WavReader::open(wav_path).unwrap();
+        let spec = wav.spec();
+        assert_eq!(spec.channels, 1);
+        assert_eq!(spec.bits_per_sample, 16);
+        let samples: Vec<f32> = wav
+            .samples::<i16>()
+            .map(|sample| f32::from(sample.unwrap()) / 32768.0)
+            .collect();
+        let samples = resample_for_parakeet(&samples, spec.sample_rate);
+        let transcript = model.transcribe(&samples).unwrap();
+        assert!(transcript.contains("语音识别"), "{transcript}");
+        assert!(transcript.contains("天气"), "{transcript}");
     }
 
     #[test]

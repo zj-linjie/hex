@@ -59,6 +59,8 @@ Context prompt (Whisper incl. ivrit.ai, Qwen3-ASR, QwenCleo)  // vocabulary.prom
 ├── Always on (not Labs): replaced the per-model Recognition hints box (#129)
 ├── Every whole-clip run reads the list at its start: dictation, meetings,
 │   captures, the local API; live streams run without it
+│   └── Synthetic-silence model prewarm runs without the list. A prompt that
+│       makes Qwen generate until its token limit cannot prevent model startup.
 ├── "Term, Term, …": the first terms in list order, at most 64, as many as
 │   fit 500 characters (Whisper: its prompt slot holds 223 tokens and trims
 │   an overlong one from the front) or 1,000 (Qwen3-ASR's system message)
@@ -130,6 +132,21 @@ transcribe.cpp fork (branch `hex/parakeet-vocabulary-tree`:
 `decode_rnnt_tree` in `src/arch/parakeet/decoder.cpp`, rescoring in
 `vocabulary.cpp`); measurements are in
 [vocabulary-boost-results.md](../research/vocabulary-boost-results.md).
+
+Prewarm uses `OfflineGgufSession::prewarm` in
+[transcription/gguf_session.rs](../../src/transcription/gguf_session.rs), shared
+by macOS and the Linux/Windows loader and idle warmup. It discards synthetic
+output (including output truncation/repetition), while device, cancellation,
+and session-recreation errors still fail. Actual transcription keeps its
+vocabulary and reports output truncation as an error. Checks:
+`prewarm_discards_decode_limits_but_preserves_real_failures` and
+`a_decode_stopped_for_repeating_keeps_its_text_and_truncation_still_fails`;
+the opt-in macOS test
+`qwen_prewarm_with_saved_vocabulary_keeps_real_transcription_working` loads
+`HEX_PREWARM_MODEL`, reads synthetic Mandarin speech from `HEX_PREWARM_WAV`,
+and optionally reads (never writes) vocabulary from
+`HEX_PREWARM_SETTINGS_DIR/settings.json`. These checks do not prove native
+microphone capture or insertion into a focused application.
 
 Provisional defaults, each changed in one place:
 
