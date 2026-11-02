@@ -383,20 +383,21 @@ impl LocalTranscriber {
         Ok(transcriber)
     }
 
-    /// Runs [`PREWARM_SAMPLES`] of silence through the model. A decoder
-    /// that runs to its generation cap on silence (Qwen3-ASR 1.7B, #968)
-    /// still ran the whole graph on the device, so that is a warm model,
-    /// not a failed device.
+    /// Runs the same synthetic silence on every candidate device, without
+    /// the user's vocabulary. The shared probe discards decoder output limits
+    /// but preserves device failures and cancellation.
     fn warm_on_silence(&mut self) -> Result<()> {
-        match self.transcribe(&vec![0.0; PREWARM_SAMPLES]) {
-            Err(error) if output_truncated(&error) => {
-                tracing::info!(
-                    error = format!("{error:#}"),
-                    "the warm-up run on silence hit the output limit; the model is warm"
-                );
-                Ok(())
+        let run = |this: &mut Self| {
+            this.session
+                .prewarm(&vec![0.0; PREWARM_SAMPLES], &this.options)
+                .wrap_err("could not prewarm transcription model")
+        };
+        match run(self) {
+            Err(error) if self.gpu_failed(&error) => {
+                self.recover_on_cpu(&error)?;
+                run(self)
             }
-            result => result.map(drop),
+            result => result,
         }
     }
 
@@ -612,16 +613,6 @@ impl LocalTranscriber {
     }
 }
 
-/// Whether `error` is a decode stopped at its output limit.
-fn output_truncated(error: &color_eyre::eyre::Report) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<transcribe_cpp::Error>(),
-            Some(transcribe_cpp::Error::OutputTruncated { .. })
-        )
-    })
-}
-
 /// The local API's own model, loaded for the selection a host asks for
 /// when the dictation engine holds another one.
 #[derive(Default)]
@@ -781,22 +772,6 @@ pub(crate) struct SwapFailed {
 mod model_swap_tests {
     use super::*;
     use crate::transcription::models::TranscriptionModelId;
-
-    #[test]
-    fn a_truncated_decode_is_recognised_through_its_context() {
-        let truncated: Result<()> = Err(transcribe_cpp::Error::OutputTruncated {
-            message: "budget".into(),
-            partial: None,
-        })
-        .wrap_err("transcription failed");
-        assert!(output_truncated(&truncated.unwrap_err()));
-        let other: Result<()> = Err(transcribe_cpp::Error::OutputRepetition {
-            message: "loop".into(),
-            partial: None,
-        })
-        .wrap_err("transcription failed");
-        assert!(!output_truncated(&other.unwrap_err()));
-    }
 
     #[test]
     fn an_unchanged_selection_loads_nothing() {

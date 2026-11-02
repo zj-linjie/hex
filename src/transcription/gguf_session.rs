@@ -316,6 +316,32 @@ impl OfflineGgufSession {
         samples: &[f32],
         options: &transcribe_cpp::RunOptions,
     ) -> transcribe_cpp::Result<transcribe_cpp::Transcript> {
+        let options = self.with_vocabulary(options, false);
+        self.with_session(|session| {
+            keep_repetition_partial(session.run(samples, &options)).map(|mut transcript| {
+                if let Some(prompt) = &options.prompt {
+                    drop_prompt_echo(&mut transcript, prompt);
+                }
+                transcript
+            })
+        })
+    }
+
+    /// Warms inference on synthetic silence, without the user's vocabulary.
+    /// A decoder can hallucinate until its output limit on silence; the probe's
+    /// text is discarded, so that limit does not make the model unusable.
+    pub(crate) fn prewarm(
+        &mut self,
+        samples: &[f32],
+        options: &transcribe_cpp::RunOptions,
+    ) -> transcribe_cpp::Result<()> {
+        self.with_session(|session| prewarm_result(session.run(samples, options)))
+    }
+
+    fn with_session<T>(
+        &mut self,
+        run: impl FnOnce(&mut transcribe_cpp::Session) -> transcribe_cpp::Result<T>,
+    ) -> transcribe_cpp::Result<T> {
         // transcribe-cpp 0.1.x retains input-sized scheduler buffers for the
         // session lifetime. Drop each used session before creating its
         // successor so a long inference cannot pin that high-water mark or
@@ -327,14 +353,7 @@ impl OfflineGgufSession {
         if let Some(cancel) = job_cancel() {
             session.set_cancel_token(&cancel);
         }
-        let options = self.with_vocabulary(options, false);
-        let result =
-            keep_repetition_partial(session.run(samples, &options)).map(|mut transcript| {
-                if let Some(prompt) = &options.prompt {
-                    drop_prompt_echo(&mut transcript, prompt);
-                }
-                transcript
-            });
+        let result = run(&mut session);
         drop(session);
         if result.is_ok() {
             self.last_run = Some(Instant::now());
@@ -379,6 +398,17 @@ impl OfflineGgufSession {
             }
         }
         Ok(output.join(" "))
+    }
+}
+
+fn prewarm_result(
+    result: transcribe_cpp::Result<transcribe_cpp::Transcript>,
+) -> transcribe_cpp::Result<()> {
+    match result {
+        Ok(_)
+        | Err(transcribe_cpp::Error::OutputTruncated { .. })
+        | Err(transcribe_cpp::Error::OutputRepetition { .. }) => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -528,6 +558,36 @@ mod tests {
         assert!(matches!(
             truncated,
             Err(transcribe_cpp::Error::OutputTruncated { .. })
+        ));
+    }
+
+    #[test]
+    fn prewarm_discards_decode_limits_but_preserves_real_failures() {
+        assert!(prewarm_result(Ok(Default::default())).is_ok());
+        assert!(
+            prewarm_result(Err(transcribe_cpp::Error::OutputTruncated {
+                message: "silent probe reached the budget".into(),
+                partial: None,
+            }))
+            .is_ok()
+        );
+        assert!(
+            prewarm_result(Err(transcribe_cpp::Error::OutputRepetition {
+                message: "silent probe repeated".into(),
+                partial: None,
+            }))
+            .is_ok()
+        );
+        assert!(matches!(
+            prewarm_result(Err(transcribe_cpp::Error::Backend("device failed".into()))),
+            Err(transcribe_cpp::Error::Backend(_))
+        ));
+        assert!(matches!(
+            prewarm_result(Err(transcribe_cpp::Error::Aborted {
+                message: "cancelled".into(),
+                partial: None,
+            })),
+            Err(transcribe_cpp::Error::Aborted { .. })
         ));
     }
 
