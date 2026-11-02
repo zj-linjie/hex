@@ -344,7 +344,10 @@ impl LocalTranscriber {
             preference,
         };
         let started = Instant::now();
-        transcriber.transcribe(&vec![0.0; 24_000])?;
+        transcriber
+            .session
+            .prewarm(&vec![0.0; 24_000], &transcriber.options)
+            .wrap_err("could not prewarm transcription model")?;
         tracing::info!(
             prewarm_ms = started.elapsed().as_millis(),
             "prewarmed local transcription model"
@@ -385,9 +388,18 @@ impl LocalTranscriber {
         if self.session.ran_recently() {
             return Ok(());
         }
-        self.transcribe(&vec![0.0; 24_000])
-            .wrap_err("could not prewarm transcription model")
-            .map(drop)
+        let run = |this: &mut Self| {
+            this.session
+                .prewarm(&vec![0.0; 24_000], &this.options)
+                .wrap_err("could not prewarm transcription model")
+        };
+        match run(self) {
+            Err(error) if self.gpu_failed(&error) => {
+                self.recover_on_cpu(&error)?;
+                run(self)
+            }
+            result => result,
+        }
     }
 
     /// Transcribes a complete 16 kHz clip, padded as a dictation's clip is.

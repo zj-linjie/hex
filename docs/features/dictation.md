@@ -603,6 +603,14 @@ physical F12 release has not been recorded.
 
 ### Streaming Finish
 
+The initial and idle GGUF warmups run synthetic silence without vocabulary
+prompts or biasing. Their generated text is discarded, so a decoder reaching
+its output limit on silence does not prevent dictation startup. Genuine model,
+device, cancellation, and session-recreation failures still propagate; real
+speech keeps its vocabulary and output-truncation errors. See
+[vocabulary prewarm checks](vocabulary.md) for the unit and opt-in model tests
+and their native-proof limits.
+
 ```ts
 Model advertises streaming, GPU device             // dictate.streaming
   // Metal on macOS, Vulkan on Linux and x64 Windows
