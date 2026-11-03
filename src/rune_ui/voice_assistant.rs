@@ -71,11 +71,18 @@ fn capture_status(ui: &Ui) -> &'static str {
 }
 
 pub(super) fn pane(ui: &Ui, p: Paint) -> El {
-    let snap = ui
-        .assistant
-        .fixture
-        .clone()
-        .unwrap_or_else(voice_assistant::snapshot);
+    let snap = ui.assistant.fixture.clone().unwrap_or_else(|| {
+        if ui.live() {
+            voice_assistant::snapshot()
+        } else {
+            voice_assistant::Snapshot {
+                enabled: ui.settings.labs.voice_assistant,
+                playback: ui.settings.voice_assistant.playback,
+                status: Status::NeedsIdentity,
+                ..Default::default()
+            }
+        }
+    });
     let status = match &snap.status {
         Status::Disabled => tr("Disabled").to_string(),
         Status::NeedsIdentity => tr("Import your existing assistant identity").to_string(),

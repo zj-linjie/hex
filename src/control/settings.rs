@@ -1418,10 +1418,12 @@ mod tests {
             assert!(entry.read_only.is_none(), "{name} must be editable");
             assert_eq!(needs(name), Some("voice_assistant"));
         }
-        let mut settings = AppSettings::default();
-        settings.dictation_hotkey = HotkeyBinding {
-            modifiers: crate::app_settings::HotkeyModifiers::option(),
-            key: None,
+        let mut settings = AppSettings {
+            dictation_hotkey: HotkeyBinding {
+                modifiers: crate::app_settings::HotkeyModifiers::option(),
+                key: None,
+            },
+            ..AppSettings::default()
         };
         settings
             .dictation_hotkey

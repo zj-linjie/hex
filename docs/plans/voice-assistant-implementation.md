@@ -51,40 +51,43 @@ write scopes and must preserve each other's changes.
 
 ## Verification record
 
-Observed on 2026-11-03:
+Observed on 2026-11-03, before installation:
 
-- `cargo check --locked --bin hex --tests` passed after integration.
-- The first native affected-module run executed 563 tests: 560 passed. The
-  missing Labs switch registration and missing Playground scene paths found
-  there were corrected. A Mac comparison against a Linux capsule golden
-  differed; no baseline images were changed.
-- The final sandbox-compatible affected-module run passed all 561 selected
-  tests. It excluded golden comparisons and three loopback-socket tests that
-  the sandbox forbids (`PermissionDenied` at `TcpListener::bind`). Those three
-  transport/mock/privacy tests passed in the earlier native run. The final
-  source also compiles the normal Hex binary through `scripts/check`.
-- Formatting, `git diff --check`, and code-shape checks passed.
-- Independent transport/input/UI reviews found issues that were corrected;
-  the fresh final runtime review reported no remaining material findings.
-  The fresh final UI review found a CLI round-trip and fixture-status layout
-  gap, both corrected. Its final follow-up was interrupted by service quota.
-- Clippy's native build step is blocked inside the sandbox: Swift compiler
-  cache access, then FoundationModels macro-plugin startup after using a
-  temporary cache. This is not a completed Clippy pass.
-- The automatic approval service subsequently exhausted its quota. A native
-  test rerun requiring approval was not executed. Official-service probing,
-  speaker/microphone/physical-key verification, signed release packaging,
-  installation and migration have not run. No identity was imported, no
-  runtime settings changed, and the installed application was not replaced.
+- `cargo check --locked --bin hex --tests` and strict
+  `cargo clippy --locked --bin hex --tests -- -D warnings` passed.
+- The affected-module native regression passed all 564 selected tests,
+  including the loopback WebSocket protocol, interruption and synthetic-token
+  privacy tests. Golden comparisons were excluded under the owner's waiver.
+  Formatting, `git diff --check`, and code-shape checks passed.
+- The opt-in official-service probe used synthetic Mandarin saying to answer
+  only and use no tools. It received STT, reply text, decodable official Opus
+  audio and TTS stop; the successful run took 12.704 seconds.
+- A second official probe said to open the system Calculator. It received all
+  four response signals in 12.627 seconds (hello at 7.191 s; upload finished
+  at 9.778 s). Calculator was absent before and a new process appeared after.
+  The original bridge remained PID 23783. This is observed application effect,
+  not a per-tool audit trail; the bridge does not expose one to Hex.
+- The real Qwen/Metal prewarm regression passed in 6.032 seconds using the
+  installed Qwen3-ASR 0.6B model, saved vocabulary and existing synthetic
+  Mandarin fixture. The prior vocabulary-safe prewarm fix remains intact.
+- macOS native-GPU renders of the dark reply and light missing-identity scenes
+  were inspected: both show separate left/right Option bindings and the
+  expected controls. These are fixtures, not microphone or physical-key proof.
+- Independent transport/input/UI reviews led to fixes for cancel after release,
+  preview isolation, shortcut recovery, audio gaps, late replies and privacy.
+  Fresh final runtime and follow-up validation reviews reported no remaining
+  material findings. The latter also checked CLI sided-key round-trip and
+  generic preview isolation.
 
-The existing old voice client was not running at the preflight check; its
-independent MCP bridge was running and was left untouched. The installed
-`3.2.0-local.72231d1` application reported ready microphone/accessibility and
-the selected Qwen model. These preflight observations do not establish the
-new assistant's end-to-end behavior. The original Qwen prewarm changes remain
-untouched in this diff.
+The old voice client was not running at preflight; its independent MCP bridge
+was left running. The installed `3.2.0-local.72231d1` application reported ready
+microphone/accessibility and the selected Qwen model. No identity import or
+runtime setting migration was needed for the protocol probes, which read the
+original assistant identity without printing it.
 
-Pending delivery steps: native protocol/audio and Qwen regression, signed
-bundle using the unchanged designated requirement, verified data backup and
-bounded shortcut/identity migration, installed-app checks, and duplicate-app
-archive/Spotlight cleanup. Native end-to-end acceptance remains pending.
+Signed bundle installation and bounded identity/shortcut migration are the next
+owner-machine step. The owner-only installation backup records the actual
+installed version, hashes, unchanged signing requirement, data preservation,
+runtime status, API regression and duplicate-bundle cleanup. Physical-keyboard,
+live microphone and audible speaker acceptance must remain separate from the
+protocol and fixture results above.

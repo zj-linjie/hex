@@ -54,9 +54,9 @@ pub(super) fn start_stream_with_fallback(
     // (Intel Smart Sound answered E_INVALIDARG for each, #988) yet accept
     // the same format with an explicit buffer duration, so each format is
     // tried both ways.
-    let mut candidates = vec![(supported.clone(), fixed_buffer_size(&supported))];
+    let mut candidates = vec![(supported, fixed_buffer_size(&supported))];
     for candidate in alternative_input_configs(device, &supported) {
-        candidates.push((candidate.clone(), BufferSize::Default));
+        candidates.push((candidate, BufferSize::Default));
         let fixed = fixed_buffer_size(&candidate);
         candidates.push((candidate, fixed));
     }
@@ -159,7 +159,7 @@ fn start_stream(
     default_name: Option<String>,
 ) -> Result<StartedStream> {
     let sample_format = supported.sample_format();
-    let mut config: StreamConfig = supported.clone().into();
+    let mut config: StreamConfig = (*supported).into();
     config.buffer_size = buffer_size;
     let sample_rate = config.sample_rate;
     let channels = usize::from(config.channels);
