@@ -354,3 +354,14 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
         std::thread::yield_now();
     }
 }
+
+#[test]
+fn assistant_start_is_classified_as_a_capture_start() {
+    assert!(starts_capture(HudEvent::Started));
+    assert!(starts_capture(HudEvent::AssistantStarted));
+    assert!(!starts_capture(HudEvent::AssistantWaiting));
+    assert!(!starts_capture(HudEvent::Meter {
+        average: 0.5,
+        peak: 0.8
+    }));
+}

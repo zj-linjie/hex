@@ -1,7 +1,7 @@
 use std::io::Cursor;
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -106,11 +106,22 @@ pub enum Tone {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Request {
     Play(Tone),
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    AssistantStop(u64),
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    AssistantStartStop(u64),
     Audition(SoundSet, Audition),
     StopAudition,
     ProvisionalStart,
     RetractStart,
     Prepare,
+}
+
+static CAPTURE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn capture_started() -> u64 {
+    CAPTURE_EPOCH.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
 }
 
 static DICTATION_PLAYER: OnceLock<SyncSender<Request>> = OnceLock::new();
@@ -281,12 +292,22 @@ pub fn preload() -> Result<()> {
                 audition.stop();
                 continue;
             }
+            let assistant_stop_epoch = match request {
+                Some(Request::AssistantStop(epoch) | Request::AssistantStartStop(epoch)) => {
+                    Some(epoch)
+                }
+                _ => None,
+            };
             let tone = match request {
                 Some(Request::Play(tone)) => {
                     if tone == Tone::DictationStart {
                         start_tone.cancel_pending();
                     }
                     Some(tone)
+                }
+                Some(Request::AssistantStop(epoch)) => assistant_stop_tone(epoch),
+                Some(Request::AssistantStartStop(epoch)) => {
+                    assistant_stop_current(epoch).then_some(Tone::DictationStart)
                 }
                 Some(Request::ProvisionalStart) => {
                     start_tone.request(received_at);
@@ -323,8 +344,24 @@ pub fn preload() -> Result<()> {
                 None => None,
             };
             if let Some(tone) = tone {
-                if let Some(sound) = sounds.get(sound_set(), tone) {
-                    output.play(sound.clone(), tone);
+                let sound = if matches!(request, Some(Request::AssistantStartStop(_))) {
+                    Some(&sounds.set(sound_set()).start_stop)
+                } else {
+                    sounds.get(sound_set(), tone)
+                };
+                if let Some(sound) = sound {
+                    if let Some(epoch) = assistant_stop_epoch {
+                        output.play_if(
+                            EpochSource {
+                                inner: sound.clone(),
+                                epoch,
+                            },
+                            tone,
+                            || assistant_stop_current(epoch),
+                        );
+                    } else {
+                        output.play(sound.clone(), tone);
+                    }
                 }
             } else if timed_out && start_tone.is_due(Instant::now()) {
                 // Only an empty queue reaches here, so a retraction sent while
@@ -376,6 +413,53 @@ pub fn play(tone: Tone) {
         #[cfg(target_os = "macos")]
         Tone::Error if !sound_set().has_own_error() => play_system_sound(tone),
         _ => enqueue(DICTATION_PLAYER.get(), Request::Play(tone)),
+    }
+}
+
+/// A warm microphone plays a retractable press; a cold one only prepares
+/// the output until the microphone confirms an intentional recording.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn assistant_start(release_while_idle: bool) {
+    if release_while_idle {
+        prepare();
+    } else {
+        play_provisional_start();
+    }
+}
+
+/// Assistant release uses the same sound without changing a dictation job's
+/// stop timestamp, which governs its independently arriving completion tone.
+pub fn assistant_stop_current(epoch: u64) -> bool {
+    CAPTURE_EPOCH.load(Ordering::Acquire) == epoch
+}
+
+fn assistant_stop_tone(epoch: u64) -> Option<Tone> {
+    assistant_stop_current(epoch).then_some(Tone::DictationStop)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn play_assistant_stop(epoch: u64, start_owed: bool) {
+    if assistant_stop_current(epoch) {
+        assistant_stop_to(DICTATION_PLAYER.get(), sounds_enabled(), epoch, start_owed);
+    }
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn assistant_stop_to(
+    player: Option<&SyncSender<Request>>,
+    enabled: bool,
+    epoch: u64,
+    start_owed: bool,
+) {
+    if enabled {
+        enqueue(
+            player,
+            if start_owed {
+                Request::AssistantStartStop(epoch)
+            } else {
+                Request::AssistantStop(epoch)
+            },
+        );
     }
 }
 
@@ -642,6 +726,7 @@ const BUNDLED_SETS: [BundledSet; 7] = [
 struct SetSounds {
     start: SamplesBuffer,
     stop: SamplesBuffer,
+    start_stop: SamplesBuffer,
     done: Option<SamplesBuffer>,
     /// Played for failures; `None` plays macOS Basso.
     error: Option<SamplesBuffer>,
@@ -651,14 +736,31 @@ struct SetSounds {
 impl SetSounds {
     fn load(bundled: &BundledSet) -> Result<Self> {
         let optional = |bytes: Option<&'static [u8]>| bytes.map(decode_wav).transpose();
+        let start = decode_wav(bundled.start)?;
+        let stop = decode_wav(bundled.stop)?;
+        let start_stop = ordered_cues(start.clone(), stop.clone())?;
         Ok(Self {
-            start: decode_wav(bundled.start)?,
-            stop: decode_wav(bundled.stop)?,
+            start,
+            stop,
+            start_stop,
             done: optional(bundled.done)?,
             error: optional(bundled.error)?,
             success: optional(bundled.success)?,
         })
     }
+}
+
+fn ordered_cues(start: SamplesBuffer, stop: SamplesBuffer) -> Result<SamplesBuffer> {
+    let channels = start.channels();
+    let rate = start.sample_rate();
+    if channels != stop.channels() || rate != stop.sample_rate() {
+        return Err(eyre!("feedback start and stop formats differ"));
+    }
+    Ok(SamplesBuffer::new(
+        channels,
+        rate,
+        start.chain(stop).collect::<Vec<_>>(),
+    ))
 }
 
 /// Decoded onboarding cues (`resources/audio/sounds/onboarding/`).
@@ -983,6 +1085,43 @@ impl<S: Source> Source for Retractable<S> {
     }
 }
 
+/// A delayed assistant cue stops producing samples as soon as another capture
+/// starts, including after the mixer has accepted it.
+struct EpochSource<S> {
+    inner: S,
+    epoch: u64,
+}
+
+impl<S: Source> Iterator for EpochSource<S> {
+    type Item = rodio::Sample;
+    fn next(&mut self) -> Option<Self::Item> {
+        if assistant_stop_current(self.epoch) {
+            self.inner.next()
+        } else {
+            None
+        }
+    }
+}
+
+impl<S: Source> Source for EpochSource<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+    fn channels(&self) -> rodio::ChannelCount {
+        self.inner.channels()
+    }
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.inner.sample_rate()
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+}
+
+fn cue_allowed_after_open(enabled: bool, still_current: impl FnOnce() -> bool) -> bool {
+    enabled && still_current()
+}
+
 fn open_output() -> Result<MixerDeviceSink> {
     let mut sink = DeviceSinkBuilder::from_default_device()
         .and_then(|builder| {
@@ -1017,11 +1156,23 @@ impl FeedbackOutput<MixerDeviceSink> {
     /// Plays a sound, opening the output first if needed. Returns whether it
     /// reached the mixer.
     fn play(&mut self, sound: impl Source + Send + 'static, tone: impl std::fmt::Debug) -> bool {
+        self.play_if(sound, tone, || true)
+    }
+
+    fn play_if(
+        &mut self,
+        sound: impl Source + Send + 'static,
+        tone: impl std::fmt::Debug,
+        still_current: impl FnOnce() -> bool,
+    ) -> bool {
         self.prepare(Instant::now());
         // Opening may have been slow; recheck the latest preference before
         // retaining the output or playing the queued sound.
-        if !sounds_enabled() {
-            self.release_when_idle(false, Instant::now());
+        let enabled = sounds_enabled();
+        if !cue_allowed_after_open(enabled, still_current) {
+            if !enabled {
+                self.release_when_idle(false, Instant::now());
+            }
             return false;
         }
         let Some(sink) = self.sink.as_ref() else {
@@ -1235,6 +1386,87 @@ mod tests {
             .position(|sample| sample.abs() > 0.01)
             .unwrap_or(samples.len());
         Duration::from_secs_f64((first / channels) as f64 / f64::from(rate))
+    }
+
+    #[test]
+    fn assistant_release_cues_are_sequential_and_fenced() {
+        let make = |samples: Vec<f32>| {
+            SamplesBuffer::new(
+                std::num::NonZero::new(1).unwrap(),
+                std::num::NonZero::new(48_000).unwrap(),
+                samples,
+            )
+        };
+        let combined = ordered_cues(make(vec![0.1, 0.2]), make(vec![0.3, 0.4])).unwrap();
+        assert_eq!(
+            combined.clone().collect::<Vec<_>>(),
+            vec![0.1, 0.2, 0.3, 0.4]
+        );
+        let epoch = capture_started();
+        let mut source = EpochSource {
+            inner: combined,
+            epoch,
+        };
+        assert_eq!(source.next(), Some(0.1));
+        assert_eq!(source.next(), Some(0.2));
+        capture_started();
+        assert_eq!(source.next(), None);
+    }
+
+    #[test]
+    fn assistant_stop_is_fenced_during_output_open_and_while_playing() {
+        let epoch = capture_started();
+        let mut output = FeedbackOutput::<()>::new();
+        output
+            .open_for_tone(Instant::now(), 0, || {
+                capture_started();
+                Ok(())
+            })
+            .unwrap();
+        assert!(!cue_allowed_after_open(true, || assistant_stop_current(
+            epoch
+        )));
+        let epoch = capture_started();
+        let mut sound = EpochSource {
+            inner: SamplesBuffer::new(
+                std::num::NonZero::new(1).unwrap(),
+                std::num::NonZero::new(48_000).unwrap(),
+                vec![0.5; 2],
+            ),
+            epoch,
+        };
+        assert_eq!(sound.next(), Some(0.5));
+        capture_started();
+        assert_eq!(sound.next(), None);
+    }
+
+    #[test]
+    fn queued_assistant_stop_is_rechecked_after_next_capture() {
+        let epoch = capture_started();
+        assert_eq!(assistant_stop_tone(epoch), Some(Tone::DictationStop));
+        capture_started();
+        assert_eq!(assistant_stop_tone(epoch), None);
+    }
+
+    #[test]
+    fn assistant_stop_uses_shared_player_without_changing_dictation_completion_clock() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(2);
+        let before = *LAST_STOP.lock().unwrap_or_else(|e| e.into_inner());
+        assistant_stop_to(Some(&sender), false, 42, false);
+        assert!(receiver.try_recv().is_err());
+        assistant_stop_to(Some(&sender), true, 42, false);
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Request::AssistantStop(42))
+        ));
+        assert!(receiver.try_recv().is_err());
+        assistant_stop_to(Some(&sender), true, 42, true);
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Request::AssistantStartStop(42))
+        ));
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(*LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()), before);
     }
 
     /// Every start sounds at once. The classic stop keeps its original soft

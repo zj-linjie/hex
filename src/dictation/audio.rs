@@ -99,6 +99,15 @@ struct State {
     recognition_generation: AtomicU64,
     outstanding_recognition_frames: Arc<AtomicU64>,
     capture_generation: AtomicU64,
+    assistant_start_ready: AtomicBool,
+    assistant_start_claimed: AtomicBool,
+}
+
+impl State {
+    fn claim_assistant_start(&self) -> bool {
+        self.assistant_start_ready.load(Ordering::Acquire)
+            && !self.assistant_start_claimed.swap(true, Ordering::AcqRel)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -122,6 +131,11 @@ enum Command {
         reply: SyncSender<bool>,
     },
     Finish {
+        at: CaptureInstant,
+        tail: Duration,
+        reply: SyncSender<Finish>,
+    },
+    FinishAssistant {
         at: CaptureInstant,
         tail: Duration,
         reply: SyncSender<Finish>,
@@ -154,6 +168,12 @@ enum Command {
 
 struct Owner {
     input: RecoveringAudioInput,
+    #[cfg(test)]
+    assistant_stop_cue: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    assistant_start_cue: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    assistant_stop_hold: Option<SyncSender<Box<dyn FnOnce() + Send>>>,
     release_while_idle: bool,
     pending_capture: Option<PendingCapture>,
     capture: DictationCapture,
@@ -172,6 +192,7 @@ struct Owner {
     /// Whether the active capture keeps its audio when the microphone fails:
     /// a programmatic capture's owner still finishes it.
     keep_on_loss: bool,
+    feedback_epoch: u64,
     /// When the stream last opened or reopened, while it is open.
     stream_opened_at: Option<Instant>,
     /// When the timeline last had a gap or the stream last failed.
@@ -272,6 +293,11 @@ impl DictationAudio {
         self.state.recording.load(Ordering::Acquire)
     }
 
+    /// Claims a ready cold-microphone start cue once for this assistant capture.
+    pub fn claim_assistant_start(&self) -> bool {
+        self.state.claim_assistant_start()
+    }
+
     /// Advances with every accepted capture start.
     pub fn capture_generation(&self) -> u64 {
         self.state.capture_generation.load(Ordering::Acquire)
@@ -348,6 +374,16 @@ impl DictationAudio {
     /// audio through `at + tail` when the capture would be transcribed.
     pub fn finish_with_tail(&self, at: CaptureInstant, tail: Duration) -> Result<Finish> {
         self.call(|reply| Command::Finish { at, tail, reply })
+    }
+
+    /// Ends assistant capture at release without retaining a tail, then sounds
+    /// the stop cue only after the recording environment restores output.
+    pub fn finish_assistant(&self, at: CaptureInstant) -> Result<Finish> {
+        self.call(|reply| Command::FinishAssistant {
+            at,
+            tail: Duration::ZERO,
+            reply,
+        })
     }
 
     pub fn cancel(&self) -> Result<()> {
@@ -510,6 +546,8 @@ impl Owner {
             recognition_generation: AtomicU64::new(0),
             outstanding_recognition_frames: Arc::new(AtomicU64::new(0)),
             capture_generation: AtomicU64::new(0),
+            assistant_start_ready: AtomicBool::new(false),
+            assistant_start_claimed: AtomicBool::new(false),
         });
         let capture = new_capture(
             if input.is_open() {
@@ -525,6 +563,12 @@ impl Owner {
         let stream_opened_at = input.is_open().then(Instant::now);
         let owner = Self {
             input,
+            #[cfg(test)]
+            assistant_stop_cue: None,
+            #[cfg(test)]
+            assistant_start_cue: None,
+            #[cfg(test)]
+            assistant_stop_hold: None,
             release_while_idle,
             pending_capture: None,
             capture,
@@ -540,6 +584,7 @@ impl Owner {
             stream_capture: false,
             active_kind: CaptureKind::Hotkey,
             keep_on_loss: false,
+            feedback_epoch: 0,
             stream_opened_at,
             discontinuity_at: None,
             #[cfg(hex_capture)]
@@ -586,6 +631,7 @@ impl Owner {
     }
 
     fn handle(&mut self, command: Command) -> bool {
+        let assistant_finish = matches!(&command, Command::FinishAssistant { .. });
         match command {
             Command::Start { at, kind, reply } => {
                 // Draining can discover a failure belonging to the previous capture or idle
@@ -598,6 +644,13 @@ impl Owner {
                     return true;
                 }
                 self.state.capture_generation.fetch_add(1, Ordering::AcqRel);
+                self.state
+                    .assistant_start_ready
+                    .store(false, Ordering::Release);
+                self.state
+                    .assistant_start_claimed
+                    .store(false, Ordering::Release);
+                self.feedback_epoch = feedback::capture_started();
                 if self.input.is_open() {
                     self.start_capture_at(kind, at);
                 } else {
@@ -620,6 +673,11 @@ impl Owner {
                 } else {
                     self.capture.become_intentional(at)
                 };
+                if became_intentional && matches!(self.active_kind, CaptureKind::Assistant) {
+                    self.state
+                        .assistant_start_ready
+                        .store(true, Ordering::Release);
+                }
                 let _ = reply.send(became_intentional);
             }
             Command::MarkIntentional { reply } => {
@@ -631,18 +689,55 @@ impl Owner {
                 };
                 let _ = reply.send(became_intentional);
             }
-            Command::Finish { at, tail, reply } => {
+            Command::Finish { at, tail, reply } | Command::FinishAssistant { at, tail, reply } => {
                 self.drain_through(at);
                 let announced = self.pending_capture.is_none()
-                    && !tail.is_zero()
+                    && (!tail.is_zero() || assistant_finish)
                     && self.capture.would_transcribe(at);
                 if announced {
+                    let start_owed = assistant_finish
+                        && self.release_while_idle
+                        && self.state.claim_assistant_start();
                     // A release that will transcribe sounds at once, not after
                     // its tail, and a muted output is restored first.
-                    self.capture
-                        .end_recording_environment_then(|| feedback::play(Tone::DictationStop));
+                    if assistant_finish {
+                        #[cfg(test)]
+                        let cue = self.assistant_stop_cue.clone();
+                        #[cfg(test)]
+                        let start_cue = self.assistant_start_cue.clone();
+                        #[cfg(test)]
+                        let hold = self.assistant_stop_hold.clone();
+                        let epoch = self.feedback_epoch;
+                        self.capture.end_recording_environment_then(move || {
+                            let play = move || {
+                                if !feedback::assistant_stop_current(epoch) {
+                                    return;
+                                }
+                                #[cfg(test)]
+                                if let Some(cue) = cue {
+                                    if start_owed && let Some(start_cue) = start_cue {
+                                        start_cue();
+                                    }
+                                    cue();
+                                    return;
+                                }
+                                feedback::play_assistant_stop(epoch, start_owed);
+                            };
+                            #[cfg(test)]
+                            if let Some(hold) = hold {
+                                let _ = hold.send(Box::new(play));
+                                return;
+                            }
+                            play();
+                        });
+                    } else {
+                        self.capture
+                            .end_recording_environment_then(|| feedback::play(Tone::DictationStop));
+                    }
                 }
-                let deferred = announced.then(|| self.drain_tail(at, tail)).flatten();
+                let deferred = (announced && !tail.is_zero())
+                    .then(|| self.drain_tail(at, tail))
+                    .flatten();
                 let mut finish = if self.pending_capture.take().is_some() {
                     if !self.capture_sink_open() {
                         self.input.cancel_open();
@@ -681,6 +776,7 @@ impl Owner {
             }
             #[cfg(hex_capture)]
             Command::OpenCaptureSink { sink, since, reply } => {
+                feedback::capture_started();
                 self.capture_sink = Some(CaptureSink::new(sink, since));
                 if !self.input.is_active() {
                     self.input.request_open();
@@ -925,7 +1021,13 @@ impl Owner {
                 if let Some(pending) = self.pending_capture.take() {
                     self.start_capture_at(pending.kind, pending.at);
                     if let Some(at) = pending.intentional_at {
-                        let _ = self.capture.become_intentional(at);
+                        let became_intentional = self.capture.become_intentional(at);
+                        if became_intentional && matches!(self.active_kind, CaptureKind::Assistant)
+                        {
+                            self.state
+                                .assistant_start_ready
+                                .store(true, Ordering::Release);
+                        }
                         let _ = self.events.send(DictationAudioEvent::ReadyIntentional {
                             capture_generation: self
                                 .state
@@ -1138,6 +1240,141 @@ mod tests {
             kind: CaptureKind::Hotkey,
             reply,
         }));
+    }
+
+    #[test]
+    fn cold_assistant_ready_before_release_claims_start_once() {
+        let (mut owner, input, samples) = owner_for_test(false);
+        owner.release_while_idle = true;
+        let (started, starts) = mpsc::channel();
+        owner.assistant_start_cue = Some(Arc::new(move || {
+            let _ = started.send(());
+        }));
+        owner.assistant_stop_cue = Some(Arc::new(|| {}));
+        let at = capture_time();
+        assert!(control(&mut owner, |reply| Command::Start {
+            at,
+            kind: CaptureKind::Assistant,
+            reply
+        }));
+        let through = at + Duration::from_millis(700);
+        assert!(!control(&mut owner, |reply| Command::BecomeIntentional {
+            at: through,
+            reply
+        }));
+        let event = owner.input.recv_timeout(Duration::ZERO, false);
+        owner.handle_input(event);
+        samples.send((vec![0.25; 16_000], through)).unwrap();
+        assert!(!control(&mut owner, |reply| Command::BecomeIntentional {
+            at: through,
+            reply
+        }));
+        assert!(matches!(
+            control(&mut owner, |reply| Command::FinishAssistant {
+                at: through,
+                tail: Duration::ZERO,
+                reply
+            }),
+            Finish::Transcribe(_)
+        ));
+        assert_eq!(starts.recv_timeout(Duration::from_secs(2)), Ok(()));
+        assert!(starts.try_recv().is_err());
+        assert!(!input.claim_assistant_start());
+        assert!(!input.is_recording());
+        assert!(matches!(
+            input.try_recv_event(),
+            Some(DictationAudioEvent::ReadyIntentional { .. })
+        ));
+    }
+
+    #[test]
+    fn delayed_assistant_stop_does_not_cross_into_next_capture() {
+        for next in ["dictation", "annotate"] {
+            #[cfg(not(hex_capture))]
+            if next == "annotate" {
+                continue;
+            }
+            let (mut owner, _input, samples) = owner_for_test(true);
+            let (held, callbacks) = mpsc::sync_channel(1);
+            let (played, tones) = mpsc::channel();
+            owner.assistant_stop_hold = Some(held);
+            owner.assistant_stop_cue = Some(Arc::new(move || {
+                let _ = played.send(());
+            }));
+            let at = capture_time();
+            assert!(control(&mut owner, |reply| Command::Start {
+                at,
+                kind: CaptureKind::Assistant,
+                reply
+            }));
+            let through = at + Duration::from_millis(700);
+            samples.send((vec![0.25; 16_000], through)).unwrap();
+            control(&mut owner, |reply| Command::BecomeIntentional {
+                at: through,
+                reply,
+            });
+            assert!(matches!(
+                control(&mut owner, |reply| Command::FinishAssistant {
+                    at: through,
+                    tail: Duration::ZERO,
+                    reply
+                }),
+                Finish::Transcribe(_)
+            ));
+            let callback = callbacks.recv_timeout(Duration::from_secs(2)).unwrap();
+            if next == "dictation" {
+                assert!(control(&mut owner, |reply| Command::Start {
+                    at: through,
+                    kind: CaptureKind::Hotkey,
+                    reply
+                }));
+            } else {
+                #[cfg(hex_capture)]
+                let _audio = open_sink(&mut owner, 2, through);
+            }
+            callback();
+            assert!(tones.try_recv().is_err(), "{next}");
+        }
+    }
+
+    #[test]
+    fn assistant_finish_runs_stop_once_only_for_completed_capture() {
+        for finish in [true, false] {
+            let (mut owner, input, samples) = owner_for_test(true);
+            let (sent, received) = mpsc::channel();
+            owner.assistant_stop_cue = Some(Arc::new(move || {
+                let _ = sent.send(());
+            }));
+            let at = capture_time();
+            assert!(control(&mut owner, |reply| Command::Start {
+                at,
+                kind: CaptureKind::Assistant,
+                reply
+            }));
+            let through = at + Duration::from_millis(700);
+            samples.send((vec![0.25; 16_000], through)).unwrap();
+            assert!(control(&mut owner, |reply| Command::BecomeIntentional {
+                at: through,
+                reply
+            }));
+            if finish {
+                assert!(matches!(
+                    control(&mut owner, |reply| Command::FinishAssistant {
+                        at: through,
+                        tail: Duration::ZERO,
+                        reply
+                    }),
+                    Finish::Transcribe(_)
+                ));
+                received
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("stop follows environment release");
+            } else {
+                control(&mut owner, |reply| Command::Cancel { reply });
+            }
+            assert!(!input.is_recording());
+            assert!(received.try_recv().is_err());
+        }
     }
 
     #[test]

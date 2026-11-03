@@ -1313,6 +1313,15 @@ and normal Spaces keep their position. Check: `scripts/check
 dictation::indicator::tests::top_capsule` covers the math only; placement over a
 fullscreen app on a notched Mac is not yet observed.
 
+The macOS [voice assistant](voice-assistant.md) shares recording-start and
+recording-stop sounds, their theme/volume, and this HUD. Assistant starts also
+open a hidden overlay and reset placement; they clear HUD Lab's demo meter so
+only the microphone drives the recording wave. Assistant release keeps its
+zero-tail upload boundary and restores recording audio before the stop cue.
+Its cue does not replace the timestamp governing an older dictation's Done.
+Physical shortcut and audible-cue parity require native acceptance; unit checks
+and offscreen frames alone do not establish that result.
+
 ### Dot scope
 
 The HUD is Dot scope on every OS ([rune_hud/dot_scope.rs](../../src/rune_hud/dot_scope.rs),
