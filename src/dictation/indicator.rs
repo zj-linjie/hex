@@ -32,6 +32,11 @@ pub enum DictationIndicatorEvent {
     /// until the next `Reset`.
     DemoVoice,
     Started,
+    AssistantStarted,
+    AssistantWaiting,
+    AssistantCompleted,
+    AssistantFailed,
+    AssistantCancelled,
     Meter {
         average: f32,
         // Dot scope follows `average`; the window's meters read
@@ -175,6 +180,7 @@ impl Phase {
 /// One Dot scope frame: the plate's pose and every dot's light.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DotFrame {
+    pub assistant: bool,
     pub pose: Pose,
     pub tuning: Tuning,
     pub columns: usize,
@@ -222,6 +228,9 @@ fn fill_island(tuning: Tuning, island: Option<Island>) -> Tuning {
 pub struct IndicatorModel {
     phase: Phase,
     capturing: bool,
+    assistant_capturing: bool,
+    assistant_waiting: bool,
+    assistant_mark: bool,
     jobs: BTreeSet<u64>,
     phase_started: Instant,
     /// When the processing look began, for [`PROCESSING_MIN_DURATION`].
@@ -248,6 +257,9 @@ impl IndicatorModel {
         Self {
             phase: Phase::Hidden,
             capturing: false,
+            assistant_capturing: false,
+            assistant_waiting: false,
+            assistant_mark: false,
             jobs: BTreeSet::new(),
             phase_started: now,
             working_since: now,
@@ -288,6 +300,9 @@ impl IndicatorModel {
         match event {
             DictationIndicatorEvent::Reset => {
                 self.capturing = false;
+                self.assistant_capturing = false;
+                self.assistant_waiting = false;
+                self.assistant_mark = false;
                 self.jobs.clear();
                 self.phase = Phase::Hidden;
                 self.completion_pending = false;
@@ -301,7 +316,47 @@ impl IndicatorModel {
             DictationIndicatorEvent::DemoVoice => {
                 self.demo_voice = Some(0.0);
             }
+            DictationIndicatorEvent::AssistantStarted => {
+                self.assistant_mark = true;
+                self.assistant_waiting = false;
+                self.assistant_capturing = true;
+                self.capturing = true;
+                self.phase = Phase::Recording;
+                self.phase_started = now;
+                self.completion_pending = false;
+                self.loudness = SILENT;
+                self.stage = Stage::Recording;
+                self.scope.restart(reduce);
+            }
+            DictationIndicatorEvent::AssistantWaiting => {
+                self.assistant_capturing = false;
+                self.capturing = false;
+                self.assistant_waiting = true;
+                self.show_pipeline(now);
+            }
+            DictationIndicatorEvent::AssistantCompleted
+            | DictationIndicatorEvent::AssistantFailed
+            | DictationIndicatorEvent::AssistantCancelled => {
+                let terminal = match event {
+                    DictationIndicatorEvent::AssistantCompleted => Phase::Completed,
+                    DictationIndicatorEvent::AssistantFailed => Phase::Failed,
+                    _ => Phase::Cancelled,
+                };
+                if self.assistant_capturing {
+                    self.capturing = false;
+                }
+                self.assistant_capturing = false;
+                self.assistant_waiting = false;
+                if active_phase(self.capturing, self.jobs.len()).is_some() {
+                    self.show_pipeline(now);
+                } else {
+                    self.phase = terminal;
+                    self.phase_started = now;
+                    self.completion_pending = false;
+                }
+            }
             DictationIndicatorEvent::Started => {
+                self.assistant_mark = false;
                 // HUD Lab and the playground send `DemoVoice` after this.
                 self.demo_voice = None;
                 self.capturing = true;
@@ -327,6 +382,7 @@ impl IndicatorModel {
                 }
             }
             DictationIndicatorEvent::Discarded => {
+                self.assistant_capturing = false;
                 self.finish_capture(now, Phase::Hidden);
             }
             DictationIndicatorEvent::Cancelled => {
@@ -353,7 +409,7 @@ impl IndicatorModel {
             self.phase_started = now;
         }
         self.completion_pending = false;
-        if self.jobs.is_empty() {
+        if self.jobs.is_empty() && !self.assistant_waiting {
             self.phase = empty_phase;
         } else {
             self.show_pipeline(now);
@@ -361,7 +417,10 @@ impl IndicatorModel {
     }
 
     fn show_pipeline(&mut self, now: Instant) {
-        let Some(phase) = active_phase(self.capturing, self.jobs.len()) else {
+        let Some(phase) = active_phase(
+            self.capturing,
+            self.jobs.len() + usize::from(self.assistant_waiting),
+        ) else {
             return;
         };
         if phase == Phase::Transcribing && self.phase != Phase::Transcribing {
@@ -379,7 +438,12 @@ impl IndicatorModel {
         if !self.jobs.remove(&job_id) {
             return;
         }
-        if active_phase(self.capturing, self.jobs.len()).is_some() {
+        if active_phase(
+            self.capturing,
+            self.jobs.len() + usize::from(self.assistant_waiting),
+        )
+        .is_some()
+        {
             self.show_pipeline(now);
             return;
         }
@@ -434,6 +498,7 @@ impl IndicatorModel {
         );
         self.active = visible || !self.scope.settled();
         DotFrame {
+            assistant: self.assistant_mark && (!self.capturing || self.assistant_capturing),
             pose: self.scope.pose(),
             tuning: self.scope.tuning(),
             columns: self.scope.columns(),
@@ -451,6 +516,31 @@ impl IndicatorModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assistant_hud_tracks_real_meter_and_waiting_without_dictation_job_collision() {
+        let start = Instant::now();
+        let mut model = IndicatorModel::new(dot_scope::lab(), start);
+        model.handle(DictationIndicatorEvent::AssistantStarted, start, false);
+        model.handle(
+            DictationIndicatorEvent::Meter {
+                average: 0.25,
+                peak: 0.5,
+            },
+            start,
+            false,
+        );
+        assert_eq!(model.phase, Phase::Recording);
+        assert!(model.loudness > SILENT);
+        assert!(model.step(start, 0.016, false).assistant);
+        model.handle(DictationIndicatorEvent::AssistantWaiting, start, false);
+        assert_eq!(model.phase, Phase::Transcribing);
+        assert!(model.step(start, 0.016, false).assistant);
+        model.handle(DictationIndicatorEvent::Started, start, false);
+        model.handle(DictationIndicatorEvent::AssistantCompleted, start, false);
+        assert_eq!(model.phase, Phase::Recording);
+        assert!(!model.step(start, 0.016, false).assistant);
+    }
 
     #[test]
     fn an_island_spreads_the_field_across_it_at_the_same_spacing() {

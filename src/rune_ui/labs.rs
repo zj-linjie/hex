@@ -27,9 +27,14 @@ pub(super) static LABS_ICON: Icon = Icon {
 pub(super) fn main_panes(ui: &Ui) -> Vec<Pane> {
     let mut panes = vec![Pane::General, Pane::Output, Pane::History];
     #[cfg(hex_capture)]
-    let optional = [Pane::Meetings, Pane::Annotate, Pane::VoiceFilter];
+    let optional = [
+        Pane::Meetings,
+        Pane::Annotate,
+        Pane::VoiceFilter,
+        Pane::VoiceAssistant,
+    ];
     #[cfg(not(hex_capture))]
-    let optional = [Pane::Meetings, Pane::VoiceFilter];
+    let optional = [Pane::Meetings, Pane::VoiceFilter, Pane::VoiceAssistant];
     panes.extend(optional.into_iter().filter(|pane| pane.shown(ui)));
     panes
 }
@@ -178,6 +183,14 @@ fn rows(ui: &Ui) -> Vec<Row> {
             Pane::Meetings.icon(),
             tr("Meetings (beta)"),
             tr("Record calls and keep transcripts"),
+        ));
+    }
+    if caps.voice_assistant {
+        rows.push(row(
+            Feature::VoiceAssistant,
+            &VOICE_FILTER_ICON,
+            tr("Voice Assistant"),
+            tr("Talk to your Xiaozhi assistant"),
         ));
     }
     if caps.fun && Feature::VoiceFilter.managed().is_some() {
@@ -425,6 +438,7 @@ fn row_key(feature: Feature) -> &'static str {
     match feature {
         Feature::Meetings => "lab-meetings",
         Feature::VoiceFilter => "lab-voice-filter",
+        Feature::VoiceAssistant => "lab-voice-assistant",
         Feature::Playground => "lab-playground",
         Feature::LiveText => "lab-live-text",
         Feature::LiveChapters => "lab-live-chapters",

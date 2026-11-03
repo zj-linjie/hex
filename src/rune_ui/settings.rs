@@ -376,6 +376,7 @@ pub(super) fn conflicts(
     use crate::app_settings::HotkeySlot;
     let slot = match target {
         ShortcutTarget::Dictation => HotkeySlot::Dictation,
+        ShortcutTarget::Assistant => HotkeySlot::Assistant,
         ShortcutTarget::PasteLast => HotkeySlot::PasteLast,
         ShortcutTarget::RawDictation => HotkeySlot::RawDictation,
         #[cfg(hex_capture)]
@@ -405,6 +406,7 @@ pub(super) fn desktop_shortcut(binding: &HotkeyBinding) -> DesktopShortcut {
 pub(super) fn binding(settings: &AppSettings, target: ShortcutTarget) -> Option<&HotkeyBinding> {
     match target {
         ShortcutTarget::Dictation => Some(&settings.dictation_hotkey),
+        ShortcutTarget::Assistant => Some(&settings.voice_assistant.hotkey),
         ShortcutTarget::PasteLast => settings.paste_last_hotkey.as_ref(),
         ShortcutTarget::RawDictation => settings.raw_dictation_hotkey.as_ref(),
         #[cfg(hex_capture)]
@@ -421,6 +423,7 @@ pub(super) fn set_binding(
 ) {
     match target {
         ShortcutTarget::Dictation => settings.dictation_hotkey = binding,
+        ShortcutTarget::Assistant => settings.voice_assistant.hotkey = binding,
         ShortcutTarget::PasteLast => settings.paste_last_hotkey = Some(binding),
         ShortcutTarget::RawDictation => settings.raw_dictation_hotkey = Some(binding),
         #[cfg(hex_capture)]
@@ -717,6 +720,7 @@ fn portal_grant(ui: &Ui, target: ShortcutTarget) -> Option<&DesktopGrantedShortc
         // macOS has no shortcuts portal.
         #[cfg(target_os = "macos")]
         ShortcutTarget::SecondDictation => return None,
+        ShortcutTarget::Assistant => return None,
     };
     granted.iter().find(|shortcut| shortcut.name == name)
 }
@@ -1160,6 +1164,7 @@ pub(super) fn hotkey_key(target: ShortcutTarget) -> &'static str {
         ShortcutTarget::Capture => "capture-hotkey",
         #[cfg(target_os = "macos")]
         ShortcutTarget::SecondDictation => "second-dictation-hotkey",
+        ShortcutTarget::Assistant => "assistant-hotkey",
     }
 }
 
@@ -1302,6 +1307,39 @@ pub(super) fn shortcut_caps(binding: &HotkeyBinding, side_picker: bool) -> Vec<S
             ModifierSide::Left if !side_picker => format!("{} {cap}", tr("Left")),
             ModifierSide::Right if !side_picker => format!("{} {cap}", tr("Right")),
             _ => cap,
+        })
+        .collect()
+}
+
+/// Project macOS keycaps for macOS preview scenes on every host.
+pub(super) fn shortcut_caps_for(
+    binding: &HotkeyBinding,
+    side_picker: bool,
+    os: super::platform::Os,
+) -> Vec<String> {
+    if os != super::platform::Os::Macos {
+        return shortcut_caps(binding, side_picker);
+    }
+    use crate::app_settings::{ChordKey, ChordModifier, ChordSide};
+    binding
+        .chord_keys()
+        .into_iter()
+        .map(|key| match key {
+            ChordKey::Key(key) => key.keycap(),
+            ChordKey::Modifier { modifier, side } => {
+                let cap = match modifier {
+                    ChordModifier::Fn => "fn",
+                    ChordModifier::Control => "⌃",
+                    ChordModifier::Option => "⌥",
+                    ChordModifier::Shift => "⇧",
+                    ChordModifier::Command => "⌘",
+                };
+                match side {
+                    Some(ChordSide::Left) if !side_picker => format!("{} {cap}", tr("Left")),
+                    Some(ChordSide::Right) if !side_picker => format!("{} {cap}", tr("Right")),
+                    _ => cap.to_owned(),
+                }
+            }
         })
         .collect()
 }

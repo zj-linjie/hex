@@ -53,6 +53,8 @@ fs2 = "0.4.3"
 getrandom = "0.4.3"
 hound = "3.5.1"
 libc = "0.2.189"
+# Compile out log-facade debug/trace, including WebSocket frame and handshake payloads.
+log = { version = "0.4.34", features = ["max_level_info"] }
 oxc_allocator = "0.156.0"
 oxc_ast = "0.156.0"
 oxc_ast_visit = "0.156.0"
@@ -80,6 +82,8 @@ url = "2.5.8"
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+opus-head-sys = { version = "0.3.3", default-features = false }
+tungstenite = { version = "0.28.0", features = ["native-tls"] }
 arboard = { version = "3.6.1", default-features = false }
 block2 = "0.6.2"
 core-graphics-types = "0.1.3"

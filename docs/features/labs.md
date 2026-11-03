@@ -18,6 +18,7 @@ setup again.
 
 ```ts
 Feature             Pane  Toggle (settings.json, hex settings)   On: what it does
+├── Voice Assistant yes labs.voice_assistant          (macOS)   Xiaozhi official voice/reply audio and the existing MCP bridge; see voice-assistant.md
 ├── Meetings (beta) yes   meetings.enabled             (macOS)   Meetings joins the sidebar: call detection, recording, transcripts
 ├── Voice Filter    yes   experimental.hex_microphone  (macOS, Linux) Voice Filter joins the sidebar; feeds the Hex Microphone (macOS driver, Linux PipeWire source)
 ├── Playground      yes   labs.playground                        a Playground sidebar item and ⇧⌘D open the story browser

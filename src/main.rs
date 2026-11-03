@@ -61,6 +61,8 @@ mod rune_ui;
 mod suppression;
 mod transcription;
 mod updater;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod voice_assistant;
 #[cfg(target_os = "windows")]
 mod windows;
 

@@ -1353,7 +1353,7 @@ pub(super) fn keys_button(ui: &Ui, p: Paint, target: ShortcutTarget) -> El {
         Face::Shortcut { saved } => {
             let keys = match s::binding(&ui.settings, target) {
                 Some(binding) => {
-                    let caps = s::shortcut_caps(binding, false);
+                    let caps = s::shortcut_caps_for(binding, false, ui.platform.caps.os);
                     key_tray(
                         p,
                         "keys",

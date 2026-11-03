@@ -87,8 +87,11 @@ impl Backend {
     /// lives.
     pub(super) fn send(&mut self, request: Request) -> Result<()> {
         match request {
-            Request::CaptureShortcutFor(_) => {
-                self.chords = Some(ChordWatch::start(self.wake.clone())?);
+            Request::CaptureShortcutFor(target) => {
+                self.chords = Some(ChordWatch::start(
+                    self.wake.clone(),
+                    target == ShortcutTarget::Assistant,
+                )?);
                 Ok(())
             }
             Request::CancelShortcut => {
@@ -165,13 +168,14 @@ struct ChordWatch {
 }
 
 impl ChordWatch {
-    fn start(wake: Arc<dyn Fn() + Send + Sync>) -> Result<Self> {
+    fn start(wake: Arc<dyn Fn() + Send + Sync>, assistant: bool) -> Result<Self> {
         crate::app_settings::set_hotkey_capture_active(true);
         let (sender, results) = mpsc::channel();
         // Labs › Sided modifier chords is read once, as recording starts.
-        let capture = RefCell::new(ChordCapture::with_sides(
-            crate::labs::sided_modifier_chords(),
-        ));
+        let mut recorder =
+            ChordCapture::with_sides(assistant || crate::labs::sided_modifier_chords());
+        recorder.key_sides = assistant;
+        let capture = RefCell::new(recorder);
         let block = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             // SAFETY: AppKit passes a live event for the handler's duration.
             let event_ref = unsafe { event.as_ref() };
@@ -253,6 +257,8 @@ struct ChordCapture {
     /// A modifier-only chord keeps every modifier's side, such as
     /// Right ⌘ + Right ⌥, instead of widening each to either side.
     sided: bool,
+    /// Assistant chords retain sides even when a non-modifier key joins.
+    key_sides: bool,
 }
 
 impl ChordCapture {
@@ -265,7 +271,12 @@ impl ChordCapture {
 
     fn mouse_down(&mut self, button: isize, flags: u64) -> Option<Chord> {
         let key = u16::try_from(button).ok().and_then(HotkeyKey::mouse)?;
-        let mut modifiers = modifiers_from_flags(flags).without_side_constraints();
+        let held = modifiers_from_flags(flags);
+        let mut modifiers = if self.key_sides {
+            held
+        } else {
+            held.without_side_constraints()
+        };
         modifiers.function = false;
         self.keyed = !modifiers.is_empty();
         self.peak = HotkeyModifiers::default();
@@ -288,7 +299,12 @@ impl ChordCapture {
         if code == ESCAPE_KEY_CODE {
             return Some(Chord::Cancelled);
         }
-        let mut modifiers = modifiers_from_flags(flags).without_side_constraints();
+        let held = modifiers_from_flags(flags);
+        let mut modifiers = if self.key_sides {
+            held
+        } else {
+            held.without_side_constraints()
+        };
         // Arrow and function keys report Fn; a chord never binds it.
         modifiers.function = false;
         // Only modifiers held with the key are spent by it.
@@ -701,6 +717,22 @@ impl NativeHost for MacHost {
                     return Err("could not restart Hex".into());
                 }
                 crate::macos_rune::quit();
+            }
+            PlatformRequest::Assistant(action) => {
+                use super::platform::AssistantRequest;
+                use crate::recognition::AssistantCaptureAction;
+                match action {
+                    AssistantRequest::Reconnect => crate::voice_assistant::reconnect(),
+                    AssistantRequest::Start => {
+                        crate::recognition::assistant_capture(AssistantCaptureAction::Start)
+                    }
+                    AssistantRequest::Finish => {
+                        crate::recognition::assistant_capture(AssistantCaptureAction::Finish)
+                    }
+                    AssistantRequest::Cancel => {
+                        crate::recognition::assistant_capture(AssistantCaptureAction::Cancel)
+                    }
+                }
             }
             PlatformRequest::SystemAudio => {
                 self.note_permission_asked(PermissionKind::SystemAudio);
@@ -1550,6 +1582,18 @@ mod tests {
             },
             key: None,
         }));
+    }
+
+    #[test]
+    fn assistant_chord_keeps_the_modifier_side_with_a_key() {
+        let mut capture = ChordCapture::with_sides(true);
+        capture.key_sides = true;
+        let binding = captured(capture.key_down(49, false, Some(" "), RIGHT_OPTION)).unwrap();
+        assert_eq!(binding.modifiers.option, Some(ModifierSide::Right));
+        assert!(binding.key.is_some());
+        let restored: HotkeyBinding =
+            serde_json::from_str(&serde_json::to_string(&binding).unwrap()).unwrap();
+        assert_eq!(restored, binding);
     }
 
     #[test]

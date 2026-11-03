@@ -25,6 +25,14 @@ use crate::parakeet::{
 };
 use crate::suppression::{DictationHotkey, DiscardCause, HotkeyAction, InputEvent, InputMonitor};
 
+mod assistant;
+pub use assistant::{
+    AssistantCaptureAction, AssistantCaptureStatus, assistant_capture, assistant_capture_status,
+};
+use assistant::{
+    AssistantRegistration, assistant_cancel, assistant_end, assistant_start, assistant_status,
+};
+
 enum FinishResult {
     Discarded,
     Silent,
@@ -365,6 +373,10 @@ pub fn listen(
     let mut personal_commands = personal_host_enabled
         .then(|| crate::personal_commands::PersonalCommands::start(transformations.clone()))
         .flatten();
+    let (_assistant_registration, assistant_rx) = AssistantRegistration::new();
+    let mut assistant_hotkey: Option<DictationHotkey> = None;
+    let mut assistant_started: Option<CaptureInstant> = None;
+    let mut assistant_pending: Option<u64> = None;
     let mut next_programmatic_id = 1_u64;
     let mut programmatic = None::<ProgrammaticDictation>;
     let mut programmatic_lost = None::<LostProgrammaticDictation>;
@@ -423,6 +435,9 @@ pub fn listen(
                     #[cfg(hex_capture)]
                     RecognitionControl::ScrawlCapture { action, reply } => {
                         let answer = match capture_host.as_mut() {
+                            Some(_) if assistant_started.is_some() => {
+                                ControlReply::error("busy", "voice assistant is recording")
+                            }
                             Some(host) => host.control(action, &input),
                             None => ControlReply::error(
                                 "feature-off",
@@ -435,6 +450,9 @@ pub fn listen(
                     #[cfg(hex_capture)]
                     RecognitionControl::CaptureCommand { command, reply } => {
                         let answer = match capture_host.as_mut() {
+                            Some(_) if assistant_started.is_some() => {
+                                ControlReply::error("busy", "voice assistant is recording")
+                            }
                             Some(host) => host.command(command, &input),
                             None => ControlReply::error("feature-off", "captures are off"),
                         };
@@ -461,7 +479,7 @@ pub fn listen(
                         reply,
                     } => {
                         let release_while_idle = microphone_policy.release_while_idle;
-                        let other_recording = programmatic.is_some();
+                        let other_recording = programmatic.is_some() || assistant_started.is_some();
                         let suspended =
                             crate::app_settings::hotkey_capture_active() || input.is_recovering();
                         let outcome = control_dictation(
@@ -796,6 +814,100 @@ pub fn listen(
                 .then(|| crate::personal_commands::PersonalCommands::start(transformations.clone()))
                 .flatten();
         }
+        if let Some(receipt) = assistant_pending {
+            use crate::voice_assistant::Status;
+            let snapshot = crate::voice_assistant::snapshot();
+            let terminal = if snapshot.turn_id != Some(receipt) {
+                Some(DictationIndicatorEvent::AssistantCancelled)
+            } else {
+                match snapshot.status {
+                    Status::Ready => Some(DictationIndicatorEvent::AssistantCompleted),
+                    Status::Error(_) | Status::Disabled | Status::NeedsIdentity => {
+                        Some(DictationIndicatorEvent::AssistantFailed)
+                    }
+                    Status::Cancelled => Some(DictationIndicatorEvent::AssistantCancelled),
+                    _ => None,
+                }
+            };
+            if let Some(terminal) = terminal {
+                if let Some(indicator) = &indicator {
+                    indicator.send(terminal);
+                }
+                assistant_pending = None;
+            }
+        }
+        let now = CaptureInstant::now();
+        let assistant_unbound = rebind(
+            &mut assistant_hotkey,
+            crate::app_settings::runtime_hotkeys().assistant,
+            now,
+        );
+        if let Some(machine) = &mut assistant_hotkey {
+            machine.set_strict_chords(true);
+            machine.set_double_tap_enabled(false);
+            machine.set_double_tap_only(false);
+            machine.set_toggle(false);
+        }
+        if assistant_started.is_some()
+            && (assistant_unbound
+                || !crate::app_settings::voice_assistant_enabled()
+                || crate::app_settings::hotkey_capture_active()
+                || input.is_recovering()
+                || assistant_started
+                    .is_some_and(|start| now.duration_since(start) > Duration::from_secs(60)))
+        {
+            assistant_end(
+                false,
+                &mut assistant_started,
+                &mut assistant_pending,
+                &input,
+                indicator.as_ref(),
+                now,
+            )?;
+            if let Some(machine) = &mut assistant_hotkey {
+                machine.suspend();
+            }
+        }
+        while let Ok(action) = assistant_rx.try_recv() {
+            match action {
+                AssistantCaptureAction::Start => {
+                    let busy = programmatic.is_some()
+                        || input.is_recording()
+                        || hotkeys.any_recording()
+                        || assistant_started.is_some()
+                        || crate::app_settings::hotkey_capture_active();
+                    #[cfg(hex_capture)]
+                    let busy = busy
+                        || capture_host
+                            .as_mut()
+                            .is_some_and(|host| host.recording_since(&input).is_some());
+                    assistant_start(
+                        busy,
+                        &mut assistant_started,
+                        &input,
+                        indicator.as_ref(),
+                        now,
+                    )?;
+                    if assistant_started.is_some() {
+                        assistant_pending = None;
+                    }
+                }
+                AssistantCaptureAction::Finish => assistant_end(
+                    true,
+                    &mut assistant_started,
+                    &mut assistant_pending,
+                    &input,
+                    indicator.as_ref(),
+                    now,
+                )?,
+                AssistantCaptureAction::Cancel => assistant_cancel(
+                    &mut assistant_started,
+                    &mut assistant_pending,
+                    &input,
+                    indicator.as_ref(),
+                )?,
+            }
+        }
         if hotkeys.configure(CaptureInstant::now()) {
             handle_hotkey_action(
                 HotkeyAction::Cancel,
@@ -848,14 +960,23 @@ pub fn listen(
             // Escape included: it belongs to the owner app (closing a
             // picker while a note records), which cancels through the API.
             if programmatic.is_some() {
+                if let Some(machine) = &mut assistant_hotkey {
+                    machine.track_key_state(input_event, capture_at);
+                }
                 hotkeys.track_key_state(input_event, capture_at);
                 continue;
             }
             if hotkey_capture_suspended {
+                if let Some(machine) = &mut assistant_hotkey {
+                    machine.track_key_state(input_event, capture_at);
+                }
                 continue;
             }
             #[cfg(hex_capture)]
-            if let Some(host) = capture_host.as_mut() {
+            if let Some(host) = capture_host
+                .as_mut()
+                .filter(|_| assistant_started.is_none())
+            {
                 // Escape while drawing stops drawing, never the recording.
                 if input_event.is_escape_down() && crate::capture_host::exit_drawing() {
                     continue;
@@ -894,6 +1015,55 @@ pub fn listen(
                 hotkeys.track_key_state(input_event, capture_at);
                 continue;
             }
+            if let Some(machine) = &mut assistant_hotkey {
+                if let Some(action) = machine.process(input_event, capture_at) {
+                    match action {
+                        HotkeyAction::Start => {
+                            let busy = input.is_recording()
+                                || hotkeys.any_recording()
+                                || assistant_started.is_some();
+                            #[cfg(hex_capture)]
+                            let busy = busy
+                                || capture_host
+                                    .as_mut()
+                                    .is_some_and(|host| host.recording_since(&input).is_some());
+                            assistant_start(
+                                busy,
+                                &mut assistant_started,
+                                &input,
+                                indicator.as_ref(),
+                                capture_at,
+                            )?;
+                            if assistant_started.is_some() {
+                                assistant_pending = None;
+                            }
+                            if assistant_started.is_none() {
+                                machine.suspend();
+                            }
+                        }
+                        HotkeyAction::Finish => assistant_end(
+                            true,
+                            &mut assistant_started,
+                            &mut assistant_pending,
+                            &input,
+                            indicator.as_ref(),
+                            capture_at,
+                        )?,
+                        _ => assistant_end(
+                            false,
+                            &mut assistant_started,
+                            &mut assistant_pending,
+                            &input,
+                            indicator.as_ref(),
+                            capture_at,
+                        )?,
+                    }
+                }
+            }
+            if assistant_started.is_some() {
+                hotkeys.track_key_state(input_event, capture_at);
+                continue;
+            }
             for (shortcut, action) in hotkeys.process(input_event, capture_at) {
                 if action == HotkeyAction::Start {
                     hotkeys.raw_capture = shortcut == Shortcut::Raw;
@@ -920,20 +1090,28 @@ pub fn listen(
             && input_monitor.pending_events().oldest().is_none()
         {
             hotkeys.recover_stale_keys();
+            if let Some(machine) = &mut assistant_hotkey {
+                machine.recover_stale_keys();
+            }
         }
-        if hotkeys.any_recording()
+        if (hotkeys.any_recording() || assistant_started.is_some())
             && input.become_intentional(capture_boundary(
                 &input,
                 microphone_policy.release_while_idle,
             ))?
             && microphone_policy.release_while_idle
+            && assistant_started.is_none()
         {
             feedback::play(Tone::DictationStart);
         }
         // Only once every queued edge is handled, so a release already seen
         // ends the press first.
         if !hotkey_capture_suspended && input_monitor.pending_events().oldest().is_none() {
-            hotkeys.break_chords(CaptureInstant::now());
+            let now = CaptureInstant::now();
+            hotkeys.break_chords(now);
+            if let Some(machine) = &mut assistant_hotkey {
+                machine.break_chord(now);
+            }
         }
         let mut received_worker_event = false;
         while let Some(event) = dictation_worker.try_recv() {
@@ -1019,11 +1197,15 @@ pub fn listen(
         while let Some(audio_event) = input.try_recv_event() {
             match audio_event {
                 DictationAudioEvent::ReadyIntentional { .. } => {
-                    if input.is_recording() {
+                    if input.is_recording() && assistant_started.is_none() {
                         feedback::play(Tone::DictationStart);
                     }
                 }
                 DictationAudioEvent::OpenFailed { error, .. } => {
+                    if assistant_started.take().is_some() {
+                        crate::voice_assistant::cancel();
+                        assistant_status(AssistantCaptureStatus::Unavailable);
+                    }
                     programmatic_microphone_lost(
                         programmatic.take(),
                         None,
@@ -1047,6 +1229,10 @@ pub fn listen(
                     ..
                 } => {
                     if was_recording {
+                        if assistant_started.take().is_some() {
+                            crate::voice_assistant::cancel();
+                            assistant_status(AssistantCaptureStatus::Unavailable);
+                        }
                         programmatic_microphone_lost(
                             programmatic.take(),
                             kept,
@@ -1075,6 +1261,10 @@ pub fn listen(
                     ..
                 } => {
                     if was_recording {
+                        if assistant_started.take().is_some() {
+                            crate::voice_assistant::cancel();
+                            assistant_status(AssistantCaptureStatus::Unavailable);
+                        }
                         programmatic_microphone_lost(
                             programmatic.take(),
                             kept,
@@ -1116,7 +1306,9 @@ pub fn listen(
                 }
             }
             if audio.is_current(input.recognition_generation())
-                && (programmatic.is_some() || hotkeys.suppresses_recognition())
+                && (programmatic.is_some()
+                    || hotkeys.suppresses_recognition()
+                    || assistant_started.is_some())
                 && let Some(indicator) = &indicator
             {
                 indicator.meter(&audio.samples);
@@ -1228,7 +1420,6 @@ fn cancel_programmatic_capture(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_hotkey_action(
     action: HotkeyAction,
     raw: bool,

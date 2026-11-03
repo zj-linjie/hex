@@ -66,7 +66,7 @@ impl AppSettings {
     /// With Labs › Mouse shortcuts off, a mouse-button shortcut (issue 209)
     /// goes back to its default and the window notes it once.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(super) fn repair_mouse_shortcuts(&mut self) {
+    pub(crate) fn repair_mouse_shortcuts(&mut self) {
         if self.labs.mouse_shortcuts {
             return;
         }
@@ -106,10 +106,14 @@ impl AppSettings {
     /// Puts back every shortcut `matches`: dictation, Paste last dictation,
     /// and Annotate to their defaults, the optional ones unbound. Returns
     /// whether any changed.
-    fn reset_shortcuts(&mut self, matches: impl Fn(&HotkeyBinding) -> bool) -> bool {
+    pub(super) fn reset_shortcuts(&mut self, matches: impl Fn(&HotkeyBinding) -> bool) -> bool {
         let mut reset = false;
         if matches(&self.dictation_hotkey) {
             self.dictation_hotkey = HotkeyBinding::default();
+            reset = true;
+        }
+        if matches(&self.voice_assistant.hotkey) {
+            self.voice_assistant.hotkey = super::VoiceAssistantSettings::default().hotkey;
             reset = true;
         }
         if self.paste_last_hotkey.as_ref().is_some_and(&matches) {
@@ -142,6 +146,49 @@ mod tests {
             modifiers: Default::default(),
             key: Some(HotkeyKey::named("menu")),
         }
+    }
+
+    #[test]
+    fn assistant_primary_click_is_repaired_when_loading() {
+        let dir = std::env::temp_dir().join(format!(
+            "hex-assistant-repair-{}-{}",
+            std::process::id(),
+            super::super::SETTINGS_TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let mut saved = AppSettings::default();
+        saved.voice_assistant.hotkey = HotkeyBinding {
+            modifiers: Default::default(),
+            key: HotkeyKey::mouse(0),
+        };
+        saved.sound_effect_volume = 0.37;
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let loaded = AppSettings::load_from(&path).unwrap();
+        assert_eq!(
+            loaded.voice_assistant.hotkey,
+            super::super::VoiceAssistantSettings::default().hotkey
+        );
+        assert_eq!(loaded.sound_effect_volume, 0.37);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn turning_mouse_shortcuts_off_repairs_assistant_binding_immediately() {
+        let mut settings = AppSettings::default();
+        settings.labs.mouse_shortcuts = true;
+        settings.voice_assistant.hotkey = HotkeyBinding {
+            modifiers: Default::default(),
+            key: HotkeyKey::mouse(3),
+        };
+        let untouched = settings.dictation_hotkey.clone();
+        crate::labs::Feature::MouseShortcuts.set(&mut settings, false);
+        assert_eq!(
+            settings.voice_assistant.hotkey,
+            super::super::VoiceAssistantSettings::default().hotkey
+        );
+        assert_eq!(settings.dictation_hotkey, untouched);
+        assert!(settings.mouse_shortcut_notice);
     }
 
     #[test]

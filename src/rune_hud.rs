@@ -492,7 +492,12 @@ impl DotUniforms {
             island: layout
                 .island
                 .map_or([0.0; 4], |island| island_shape(island, pose)),
-            field: [field_radius(layout, pose), 0.0, 0.0, 0.0],
+            field: [
+                field_radius(layout, pose),
+                if frame.assistant { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ],
         }
     }
 }

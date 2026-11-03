@@ -48,6 +48,8 @@ pub(crate) type Waker = Arc<dyn Fn() + Send + Sync>;
 pub(crate) enum ShortcutTarget {
     #[default]
     Dictation,
+    /// macOS assistant recorder in shared UI fixtures; unavailable at runtime here.
+    Assistant,
     PasteLast,
     Capture,
     RawDictation,
@@ -917,6 +919,11 @@ impl LinuxDesktopHost {
     }
 
     fn set_hotkey(&mut self, target: ShortcutTarget, shortcut: DesktopShortcut) -> Result<()> {
+        if target == ShortcutTarget::Assistant {
+            return Err(color_eyre::eyre::eyre!(
+                "Voice assistant is unavailable on Linux"
+            ));
+        }
         let binding = match LinuxHotkey::try_from(shortcut) {
             Ok(binding) => binding,
             Err(error) => {
@@ -936,6 +943,9 @@ impl LinuxDesktopHost {
     }
 
     fn begin_shortcut_edit(&mut self, target: ShortcutTarget, hotkey: Option<LinuxHotkey>) {
+        if target == ShortcutTarget::Assistant {
+            return;
+        }
         if self.shortcut_edit.is_some() {
             return;
         }
@@ -1056,6 +1066,7 @@ impl LinuxDesktopHost {
                     let binding = HotkeyBinding::from(&binding);
                     match target {
                         ShortcutTarget::Dictation => settings.dictation_hotkey = binding,
+                        ShortcutTarget::Assistant => {}
                         ShortcutTarget::PasteLast => settings.paste_last_hotkey = Some(binding),
                         ShortcutTarget::Capture => settings.capture.hotkey = binding,
                         ShortcutTarget::RawDictation => {

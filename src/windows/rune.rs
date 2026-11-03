@@ -84,6 +84,8 @@ pub(crate) enum Request {
 pub(crate) enum ShortcutTarget {
     #[default]
     Dictation,
+    /// macOS assistant recorder in shared UI fixtures; unavailable at runtime here.
+    Assistant,
     PasteLast,
     /// Annotate (the `capture` experiment).
     Capture,

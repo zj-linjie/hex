@@ -1593,6 +1593,80 @@ fn hud_lab_and_activity_stay_out_of_the_window_sidebar() {
 }
 
 #[test]
+fn assistant_fixture_has_accessible_controls_and_copyable_reply() {
+    let mut rt = runtime("mac-assistant-reply", true, TALL_SIZE);
+    for key in [
+        "nav-voice-assistant",
+        "assistant-shortcut",
+        "dictation-shortcut",
+        "assistant-playback",
+        "assistant-import",
+        "assistant-reconnect",
+        "assistant-start",
+        "assistant-finish",
+        "assistant-cancel",
+        "assistant-copy-0",
+    ] {
+        assert!(rt.find(key).is_some(), "missing {key}");
+    }
+    tap(&mut rt, "assistant-copy-0");
+    assert_eq!(rt.copy_request.as_deref(), Some("Obsidian is open."));
+    tap(&mut rt, "assistant-playback");
+    assert!(!rt.state.settings.voice_assistant.playback);
+}
+
+#[test]
+fn assistant_scene_routes_actions_only_to_fixture_host() {
+    use super::platform::AssistantRequest as Action;
+    let mut rt = runtime("mac-assistant-reply", true, TALL_SIZE);
+    for key in [
+        "assistant-reconnect",
+        "assistant-start",
+        "assistant-finish",
+        "assistant-cancel",
+        "assistant-import",
+    ] {
+        tap(&mut rt, key);
+    }
+    assert_eq!(
+        asked(&rt),
+        [
+            PlatformRequest::Assistant(Action::Reconnect),
+            PlatformRequest::Assistant(Action::Start),
+            PlatformRequest::Assistant(Action::Finish),
+            PlatformRequest::Assistant(Action::Cancel),
+        ]
+    );
+    assert!(rt.state.assistant.fixture.is_some());
+}
+
+#[test]
+fn assistant_scene_shows_mac_shortcut_sides_with_shared_recorders() {
+    let mut rt = runtime("mac-assistant-reply", true, TALL_SIZE);
+    let shown = texts(&rt);
+    assert!(shown.iter().any(|text| text == "Left ⌥"), "{shown:?}");
+    assert!(shown.iter().any(|text| text == "Right ⌥"), "{shown:?}");
+    tap(&mut rt, "assistant-hotkey");
+    assert!(matches!(
+        rt.state.capture,
+        Capture::Listening {
+            target: ShortcutTarget::Assistant,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn assistant_labs_toggle_controls_its_sidebar_item() {
+    let mut rt = runtime("mac-settings", true, PANE_SIZE);
+    assert!(rt.find("nav-voice-assistant").is_none());
+    tap(&mut rt, "nav-labs");
+    tap(&mut rt, "lab-voice-assistant");
+    assert!(rt.state.settings.labs.voice_assistant);
+    assert!(rt.find("nav-voice-assistant").is_some());
+}
+
+#[test]
 fn voice_filter_shows_only_while_its_labs_toggle_is_on() {
     let mut rt = runtime("mac-settings", true, PANE_SIZE);
     rt.state.settings.experimental.hex_microphone = false;
@@ -1841,6 +1915,8 @@ fn experiment_goldens() {
     let _goldens = Goldens::collect();
     for dark in [true, false] {
         check_golden("mac-voice-filter", dark, PANE_SIZE);
+        check_golden("mac-assistant-needs-identity", dark, PANE_SIZE);
+        check_golden("mac-assistant-reply", dark, PANE_SIZE);
         check_golden("mac-hud-lab", dark, PANE_SIZE);
     }
     check_golden("mac-voice-filter-muted", true, PANE_SIZE);

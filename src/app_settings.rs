@@ -18,6 +18,11 @@ use crate::transcription::models::{TranscriptionModelId, TranscriptionSelection}
 mod dictation_processing;
 mod persistence;
 mod shortcut_repair;
+mod voice_assistant;
+
+pub use voice_assistant::VoiceAssistantSettings;
+#[cfg(target_os = "macos")]
+pub use voice_assistant::voice_assistant_enabled;
 
 pub use dictation_processing::{
     DictationMode, DictationPostProcessing, DictationProcessingSettings,
@@ -1053,6 +1058,7 @@ fn side_from_flags(flags: u64, general: u64, left: u64, right: u64) -> Option<Mo
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuntimeHotkeys {
+    pub assistant: Option<RuntimeHotkey>,
     pub dictation: RuntimeHotkey,
     pub paste_last: Option<RuntimeHotkey>,
     pub paste_meeting: Option<RuntimeHotkey>,
@@ -1066,8 +1072,9 @@ pub struct RuntimeHotkeys {
 
 impl RuntimeHotkeys {
     /// Every shortcut Hex matches, for suppression and chord evidence.
-    pub fn all(self) -> [Option<RuntimeHotkey>; 6] {
+    pub fn all(self) -> [Option<RuntimeHotkey>; 7] {
         [
+            self.assistant,
             Some(self.dictation),
             self.paste_last,
             self.paste_meeting,
@@ -1081,6 +1088,7 @@ impl RuntimeHotkeys {
 impl Default for RuntimeHotkeys {
     fn default() -> Self {
         Self {
+            assistant: None,
             dictation: HotkeyBinding::default().runtime(),
             paste_last: Some(HotkeyBinding::paste_last_default().runtime()),
             paste_meeting: crate::DEVELOPER_FEATURES_ENABLED
@@ -1371,6 +1379,7 @@ impl Default for ExperimentalSettings {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct LabsSettings {
+    pub voice_assistant: bool,
     /// Live text beside the HUD while dictating.
     pub live_text: bool,
     /// Live chapters while a meeting records.
@@ -1431,6 +1440,7 @@ pub const UNLOAD_IDLE_MINUTES: [u32; 4] = [5, 15, 30, 60];
 impl Default for LabsSettings {
     fn default() -> Self {
         Self {
+            voice_assistant: false,
             live_text: false,
             live_chapters: false,
             playground: false,
@@ -1773,6 +1783,7 @@ pub struct AppSettings {
     pub double_tap_only: bool,
     pub shortcut_mode: crate::dictation::ShortcutMode,
     pub dictation_hotkey: HotkeyBinding,
+    pub voice_assistant: VoiceAssistantSettings,
     /// Retired Voice Action shortcut, kept untouched in `settings.json`.
     #[serde(
         default,
@@ -1915,6 +1926,7 @@ impl Default for AppSettings {
             double_tap_only: false,
             shortcut_mode: crate::dictation::ShortcutMode::Hold,
             dictation_hotkey: HotkeyBinding::default(),
+            voice_assistant: VoiceAssistantSettings::default(),
             retired_edit_hotkey: None,
             paste_last_hotkey: Some(HotkeyBinding::paste_last_default()),
             raw_dictation_hotkey: None,
@@ -2220,6 +2232,7 @@ impl AppSettings {
     }
 
     fn apply_runtime(&self) {
+        voice_assistant::apply(self);
         // Whatever an editor holds, a managed lock keeps its switches off.
         let policy = crate::policy::Policy::current();
         if policy.any() {
@@ -2470,6 +2483,7 @@ impl AppSettings {
 
     pub fn runtime_hotkeys(&self) -> RuntimeHotkeys {
         RuntimeHotkeys {
+            assistant: self.active_assistant_hotkey().map(HotkeyBinding::runtime),
             dictation: self.dictation_hotkey.runtime(),
             paste_last: self.paste_last_hotkey.as_ref().map(HotkeyBinding::runtime),
             paste_meeting: self
@@ -2513,38 +2527,8 @@ impl AppSettings {
     /// owner couldn't change it in Settings. Such a shortcut goes back to its
     /// default when settings load.
     fn repair_bare_primary_clicks(&mut self) {
-        if self.dictation_hotkey.is_bare_primary_click() {
-            tracing::warn!("replaced a left-click dictation shortcut with the default");
-            self.dictation_hotkey = HotkeyBinding::default();
-        }
-        if self
-            .paste_last_hotkey
-            .as_ref()
-            .is_some_and(HotkeyBinding::is_bare_primary_click)
-        {
-            tracing::warn!("replaced a left-click paste-last shortcut with the default");
-            self.paste_last_hotkey = Some(HotkeyBinding::paste_last_default());
-        }
-        if self
-            .raw_dictation_hotkey
-            .as_ref()
-            .is_some_and(HotkeyBinding::is_bare_primary_click)
-        {
-            tracing::warn!("cleared a left-click raw dictation shortcut");
-            self.raw_dictation_hotkey = None;
-        }
-        if self
-            .second_dictation_hotkey
-            .as_ref()
-            .is_some_and(HotkeyBinding::is_bare_primary_click)
-        {
-            tracing::warn!("cleared a left-click second dictation shortcut");
-            self.second_dictation_hotkey = None;
-        }
-        #[cfg(hex_capture)]
-        if self.capture.hotkey.is_bare_primary_click() {
-            tracing::warn!("replaced a left-click capture shortcut with the default");
-            self.capture.hotkey = HotkeyBinding::capture_default();
+        if self.reset_shortcuts(HotkeyBinding::is_bare_primary_click) {
+            tracing::warn!("replaced unsafe left-click shortcuts");
         }
     }
 }
@@ -2562,6 +2546,7 @@ pub fn hotkey_conflicts(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HotkeySlot {
     Dictation,
+    Assistant,
     PasteLast,
     RawDictation,
     #[cfg(hex_capture)]
@@ -2577,6 +2562,9 @@ impl AppSettings {
     /// captures on can't pull them apart.
     pub fn hotkey_in_use(&self, slot: HotkeySlot, binding: &HotkeyBinding) -> bool {
         let mut others = Vec::new();
+        if slot != HotkeySlot::Assistant && cfg!(target_os = "macos") && self.labs.voice_assistant {
+            others.push(self.voice_assistant.hotkey.clone());
+        }
         if slot != HotkeySlot::Dictation {
             others.push(self.dictation_hotkey.clone());
         }

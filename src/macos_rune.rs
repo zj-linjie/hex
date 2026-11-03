@@ -118,6 +118,8 @@ pub(crate) enum ShortcutTarget {
     RawDictation,
     /// Labs › Second dictation shortcut.
     SecondDictation,
+    /// Labs › Voice assistant (hold to send to Xiaozhi).
+    Assistant,
 }
 
 /// What the runtime last published for the window and the menu bar.
