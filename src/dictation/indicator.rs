@@ -317,6 +317,7 @@ impl IndicatorModel {
                 self.demo_voice = Some(0.0);
             }
             DictationIndicatorEvent::AssistantStarted => {
+                self.demo_voice = None;
                 self.assistant_mark = true;
                 self.assistant_waiting = false;
                 self.assistant_capturing = true;

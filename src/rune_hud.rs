@@ -220,6 +220,10 @@ pub(crate) struct Hud {
 #[cfg(not(target_os = "macos"))]
 const FOLLOW_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
+fn starts_capture(event: HudEvent) -> bool {
+    matches!(event, HudEvent::Started | HudEvent::AssistantStarted)
+}
+
 impl Hud {
     /// While shown, every `FOLLOW_EVERY`: the HUD and the live text move to
     /// the display under the pointer when it moved to another, at once and
@@ -242,16 +246,16 @@ impl Hud {
         // so a placement Rune resolved wrong on another screen (#873)
         // doesn't stick.
         #[cfg(target_os = "macos")]
-        if let HudEvent::ConfigureDotScope(_) | HudEvent::Started = event {
+        if matches!(event, HudEvent::ConfigureDotScope(_)) || starts_capture(event) {
             self.placed = None;
         }
         #[cfg(not(target_os = "macos"))]
-        if let HudEvent::Started = event {
+        if starts_capture(event) {
             self.edge_placed = None;
         }
         self.model.handle(event, Instant::now(), self.reduce);
         self.animating.store(true, Ordering::Release);
-        let starts = matches!(event, HudEvent::Started);
+        let starts = starts_capture(event);
         if starts || (self.shown && !matches!(event, HudEvent::Meter { .. })) {
             self.show();
         }

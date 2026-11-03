@@ -887,6 +887,7 @@ pub fn listen(
                         &input,
                         indicator.as_ref(),
                         now,
+                        microphone_policy.release_while_idle,
                     )?;
                     if assistant_started.is_some() {
                         assistant_pending = None;
@@ -1034,6 +1035,7 @@ pub fn listen(
                             &input,
                             indicator.as_ref(),
                             capture_at,
+                            microphone_policy.release_while_idle,
                         )?;
                         if assistant_started.is_some() {
                             assistant_pending = None;
@@ -1100,7 +1102,7 @@ pub fn listen(
                 microphone_policy.release_while_idle,
             ))?
             && microphone_policy.release_while_idle
-            && assistant_started.is_none()
+            && (assistant_started.is_none() || input.claim_assistant_start())
         {
             feedback::play(Tone::DictationStart);
         }
@@ -1197,12 +1199,15 @@ pub fn listen(
         while let Some(audio_event) = input.try_recv_event() {
             match audio_event {
                 DictationAudioEvent::ReadyIntentional { .. } => {
-                    if input.is_recording() && assistant_started.is_none() {
+                    if input.is_recording()
+                        && (assistant_started.is_none() || input.claim_assistant_start())
+                    {
                         feedback::play(Tone::DictationStart);
                     }
                 }
                 DictationAudioEvent::OpenFailed { error, .. } => {
                     if assistant_started.take().is_some() {
+                        feedback::retract_start();
                         crate::voice_assistant::cancel();
                         assistant_status(AssistantCaptureStatus::Unavailable);
                     }
@@ -1230,6 +1235,7 @@ pub fn listen(
                 } => {
                     if was_recording {
                         if assistant_started.take().is_some() {
+                            feedback::retract_start();
                             crate::voice_assistant::cancel();
                             assistant_status(AssistantCaptureStatus::Unavailable);
                         }
@@ -1262,6 +1268,7 @@ pub fn listen(
                 } => {
                     if was_recording {
                         if assistant_started.take().is_some() {
+                            feedback::retract_start();
                             crate::voice_assistant::cancel();
                             assistant_status(AssistantCaptureStatus::Unavailable);
                         }

@@ -121,3 +121,68 @@ configuration was published.
 Physical-keyboard → live speech → tool interaction and audible-speaker
 acceptance remain unobserved. Protocol probes, synthetic host audio, native
 button capture/cancel and fixture renders do not replace those human checks.
+
+
+## Recording feedback follow-up (2026-11-03)
+
+Scope: fix right-Option recording feedback to reuse local dictation's sounds
+and Dot scope without changing the official backend, MCP bridge, shortcuts,
+identity, or microphone/audio submission boundaries. Linux rendering/goldens
+remain waived by the owner for this same delivery.
+
+Write ownership in the existing `codex/assistant-recording-feedback` checkout:
+
+- `assistant_feedback` (Executor): recognition/assistant capture feedback,
+  shared feedback requests, audio-owner release callback, indicator and HUD
+  start/show/placement gates, plus focused regressions in those modules.
+- Main integrator: dependency-pin synchronization required by AGENTS, feature
+  maps, validation/evidence, personal-fork PR, signed installation, data
+  preservation, archive verification and rollback instructions.
+- Independent Reviewer: read-only correctness/omission and scoped simplify
+  review of the completed diff; the shared workspace must preserve others' work.
+
+Implementation: warm-microphone starts request the existing provisional cue;
+cold starts wait for the existing intentional/ready admission. Discards and
+cancels retract it. Assistant release uses the audio owner's zero-tail finish
+and recording-environment restoration callback before the shared stop cue,
+without changing the dictation completion clock. Cold readiness is claimed
+once by recognition or release; a start still owed at release is sequenced
+before stop in one sound source. Delayed assistant cues are fenced at the
+restoration callback, playback queue, output-open completion and each sample
+when any new dictation/programmatic/assistant or Annotate capture starts.
+`AssistantStarted` uses the
+same native overlay show/placement gate as `Started` and clears HUD Lab demo
+metering. Reply playback remains a separate existing setting.
+
+Rune is synchronized from `c8f2888` to dev `1213159` as required by the project.
+The `## dev` changelog is unchanged between these commits; the 17 commits
+include macOS hidden-panel ordering and renderer/runtime changes. No Hex API
+adaptation was identified before compilation. Cargo pins and the Nix output
+hash move together; the recursive source hash calculation was checked against
+the old pin's known hash before calculating the new one. Nix itself is not
+installed on this Mac.
+
+Observed before installation:
+
+- Strict `cargo clippy --locked --bin hex --tests -- -D warnings` passed.
+- `scripts/check` / nextest passed all 501 selected feedback, audio-owner,
+  recognition, indicator/HUD, shortcut, assistant and Rune UI checks. These
+  include cold ready-at-release once-claim, sequential start/stop samples,
+  delayed restoration across a new dictation or Annotate, output-open and
+  playing-source generation fences. The HUD-specific added check classifies
+  start events; it does not instantiate a native overlay.
+- The initial broader run passed 497/498 checks; its meeting-capsule
+  `panel_goldens` failed on macOS `call-ended-light` (4629 pixels). The retained
+  old-pin (`c8f2888`) test harness reproduced that exact fixture/count, so the
+  final selected run excludes that existing local baseline mismatch. No golden
+  was rewritten. Linux goldens remain waived; neither a Linux/Windows build
+  nor a Nix build was run. Shared assistant-only feedback entries carry the
+  existing non-macOS dead-code annotation pattern.
+- Formatting, code-shape and diff checks passed. Debug linking warned that its
+  exception-unwind section exceeds the compact-unwind encoding limit; it did
+  not fail the build or tests.
+
+Native panel recording/cancel can establish hidden-overlay presentation without
+sending microphone audio. Physical keys, spoken-wave response, audible cues
+and the valid-release cloud path still require deliberate human acceptance;
+no automatic environmental recording is submitted for this follow-up.

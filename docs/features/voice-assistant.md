@@ -12,12 +12,16 @@ Labs > Voice Assistant [off by default]                  // assistant.opt-in
     │   └── owner-only Application Support/hex/voice-assistant-identity.json
     ├── Hold to talk [Right Option; editable]            // assistant.capture
     │   ├── microphone already owned -> report busy; never steal it
-    │   ├── hold -> same native microphone timeline + real HUD samples
+    │   ├── hold -> shared start cue + visible Dot scope from the native microphone
+    │   │   └── sound theme/volume and HUD placement/Reduce Motion follow dictation
+    │   ├── valid release -> shared stop cue after restoring recording audio,
+    │   │   then waiting animation; no pre-roll or release-tail audio is submitted
     │   ├── extra chord / short tap / silent / audio gap / cancel -> discard locally
     │   └── valid release -> paced 16 kHz mono Opus, manual listen
     ├── Start speaking / End and send -> accessible capture controls
     ├── transcription and reply -> bounded memory-only conversation
     ├── Play replies [on] -> official returned Opus audio // assistant.reply
+    │   └── independent of recording cues; Sound volume = 0 mutes cues only
     │   └── off -> stop local playback; keep receiving text
     └── Cancel / next hold -> stop local playback, request backend abort
         └── isolate old connection; no guarantee of undoing a tool action
@@ -36,6 +40,18 @@ A microphone interruption, including one before the hold threshold, discards
 the whole assistant capture. A detected timeline gap over the audio owner's
 50 ms tolerance also discards it, so an incomplete instruction is never
 submitted. Local dictation retains its existing recovery behavior.
+
+The start cue uses dictation's retractable 40 ms chord grace when the microphone
+stays ready. With Release microphone while idle, it waits for an intentional
+hold and an open device. Short taps, extra-key chords and explicit cancellation retract that cue;
+they never play the stop cue. A silent full-length hold can play the release
+cue before its samples are rejected locally. An accepted release restores recording audio
+before its stop cue, and does not reset an older dictation job's completion-tone
+clock. The assistant start event opens and repositions a hidden HUD just as a
+local dictation does, and clears any HUD Lab demo voice before real metering.
+A cold start still owed at release plays before stop in one sequential source.
+Delayed cues are invalidated by the next capture, including Annotate. The
+official-reply switch controls returned speech independently of these cues.
 
 The pane reports the voice connection separately from the bridge: a connected
 voice session does not prove a bridge is running or an action succeeded. It

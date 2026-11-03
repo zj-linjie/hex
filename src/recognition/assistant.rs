@@ -73,6 +73,7 @@ pub(super) fn assistant_start(
     input: &DictationAudio,
     indicator: Option<&DictationIndicatorSender>,
     at: CaptureInstant,
+    release_while_idle: bool,
 ) -> Result<()> {
     if busy {
         assistant_status(AssistantCaptureStatus::Busy);
@@ -82,6 +83,7 @@ pub(super) fn assistant_start(
         assistant_status(AssistantCaptureStatus::Unavailable);
         return Ok(());
     }
+    feedback::assistant_start(release_while_idle);
     crate::voice_assistant::begin_turn();
     *started = Some(at);
     assistant_status(AssistantCaptureStatus::Recording);
@@ -122,6 +124,9 @@ fn cancel_with(
     clear_hud: impl FnOnce(),
 ) -> Result<()> {
     let owns_input = started.take().is_some();
+    if owns_input {
+        feedback::retract_start();
+    }
     let had_pending = pending.take().is_some();
     let input_result = if owns_input { cancel_input() } else { Ok(()) };
     cancel_runtime();
@@ -147,7 +152,7 @@ pub(super) fn assistant_end(
         && at.duration_since(start) <= Duration::from_secs(60);
     if valid {
         input.become_intentional(at)?;
-        match input.finish(at)? {
+        match input.finish_assistant(at)? {
             Finish::Transcribe(clip) => {
                 if let Some(samples) = clip.into_assistant_samples() {
                     match crate::voice_assistant::submit(samples) {
@@ -176,6 +181,7 @@ pub(super) fn assistant_end(
         input.cancel()?;
         crate::voice_assistant::cancel();
     }
+    feedback::retract_start();
     assistant_status(AssistantCaptureStatus::Idle);
     if let Some(indicator) = indicator {
         indicator.send(DictationIndicatorEvent::AssistantCancelled);
