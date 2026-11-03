@@ -1015,49 +1015,49 @@ pub fn listen(
                 hotkeys.track_key_state(input_event, capture_at);
                 continue;
             }
-            if let Some(machine) = &mut assistant_hotkey {
-                if let Some(action) = machine.process(input_event, capture_at) {
-                    match action {
-                        HotkeyAction::Start => {
-                            let busy = input.is_recording()
-                                || hotkeys.any_recording()
-                                || assistant_started.is_some();
-                            #[cfg(hex_capture)]
-                            let busy = busy
-                                || capture_host
-                                    .as_mut()
-                                    .is_some_and(|host| host.recording_since(&input).is_some());
-                            assistant_start(
-                                busy,
-                                &mut assistant_started,
-                                &input,
-                                indicator.as_ref(),
-                                capture_at,
-                            )?;
-                            if assistant_started.is_some() {
-                                assistant_pending = None;
-                            }
-                            if assistant_started.is_none() {
-                                machine.suspend();
-                            }
+            if let Some(machine) = &mut assistant_hotkey
+                && let Some(action) = machine.process(input_event, capture_at)
+            {
+                match action {
+                    HotkeyAction::Start => {
+                        let busy = input.is_recording()
+                            || hotkeys.any_recording()
+                            || assistant_started.is_some();
+                        #[cfg(hex_capture)]
+                        let busy = busy
+                            || capture_host
+                                .as_mut()
+                                .is_some_and(|host| host.recording_since(&input).is_some());
+                        assistant_start(
+                            busy,
+                            &mut assistant_started,
+                            &input,
+                            indicator.as_ref(),
+                            capture_at,
+                        )?;
+                        if assistant_started.is_some() {
+                            assistant_pending = None;
                         }
-                        HotkeyAction::Finish => assistant_end(
-                            true,
-                            &mut assistant_started,
-                            &mut assistant_pending,
-                            &input,
-                            indicator.as_ref(),
-                            capture_at,
-                        )?,
-                        _ => assistant_end(
-                            false,
-                            &mut assistant_started,
-                            &mut assistant_pending,
-                            &input,
-                            indicator.as_ref(),
-                            capture_at,
-                        )?,
+                        if assistant_started.is_none() {
+                            machine.suspend();
+                        }
                     }
+                    HotkeyAction::Finish => assistant_end(
+                        true,
+                        &mut assistant_started,
+                        &mut assistant_pending,
+                        &input,
+                        indicator.as_ref(),
+                        capture_at,
+                    )?,
+                    _ => assistant_end(
+                        false,
+                        &mut assistant_started,
+                        &mut assistant_pending,
+                        &input,
+                        indicator.as_ref(),
+                        capture_at,
+                    )?,
                 }
             }
             if assistant_started.is_some() {
@@ -1420,6 +1420,7 @@ fn cancel_programmatic_capture(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_hotkey_action(
     action: HotkeyAction,
     raw: bool,

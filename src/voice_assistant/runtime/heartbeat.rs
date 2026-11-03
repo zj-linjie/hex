@@ -76,10 +76,7 @@ pub(super) fn service_upload(
             if matches!(
                 e.kind(),
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ) =>
-        {
-            ()
-        }
+            ) => {}
         Err(_) => return Err("Assistant disconnected; the operation was not retried".into()),
     }
     Ok(())

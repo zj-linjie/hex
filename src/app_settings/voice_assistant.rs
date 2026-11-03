@@ -77,10 +77,12 @@ mod tests {
 
     #[test]
     fn assistant_conflicts_with_an_either_side_dictation_but_not_the_other_side() {
-        let mut settings = AppSettings::default();
-        settings.dictation_hotkey = HotkeyBinding {
-            modifiers: HotkeyModifiers::option(),
-            key: None,
+        let mut settings = AppSettings {
+            dictation_hotkey: HotkeyBinding {
+                modifiers: HotkeyModifiers::option(),
+                key: None,
+            },
+            ..AppSettings::default()
         };
         let assistant = settings.voice_assistant.hotkey.clone();
         assert!(settings.hotkey_in_use(HotkeySlot::Assistant, &assistant));

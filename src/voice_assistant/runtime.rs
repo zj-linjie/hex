@@ -162,10 +162,10 @@ pub(super) fn submit(samples: Vec<f32>) -> Result<u64, String> {
     Ok(receipt)
 }
 pub(super) fn mute_now() {
-    if let Ok(mut player) = PLAYER.lock() {
-        if let Some(player) = player.take() {
-            player.stop();
-        }
+    if let Ok(mut player) = PLAYER.lock()
+        && let Some(player) = player.take()
+    {
+        player.stop();
     }
 }
 pub(super) fn playback_changed(enabled: bool) {
@@ -312,10 +312,7 @@ fn connect_identity(bytes: &[u8]) -> Result<(Socket, String, u32), String> {
                 if matches!(
                     e.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                ()
-            }
+                ) => {}
             _ => return Err("Assistant connection closed during hello".into()),
         }
     }
@@ -591,13 +588,12 @@ fn worker(rx: mpsc::Receiver<(u64, Command)>) {
                                     Ok(sink) => {
                                         let player =
                                             Arc::new(rodio::Player::connect_new(sink.mixer()));
-                                        if let Ok(mut slot) = PLAYER.lock() {
-                                            if PLAYBACK.load(Ordering::SeqCst)
-                                                && generation == GENERATION.load(Ordering::SeqCst)
-                                            {
-                                                *slot = Some(player.clone());
-                                                speaker = Some((sink, player));
-                                            }
+                                        if let Ok(mut slot) = PLAYER.lock()
+                                            && PLAYBACK.load(Ordering::SeqCst)
+                                            && generation == GENERATION.load(Ordering::SeqCst)
+                                        {
+                                            *slot = Some(player.clone());
+                                            speaker = Some((sink, player));
                                         }
                                     }
                                     Err(_) => {
@@ -612,17 +608,16 @@ fn worker(rx: mpsc::Receiver<(u64, Command)>) {
                                 if player.len() < 100 {
                                     // Serialize appends with mute/interrupt so no packet can
                                     // restart a player that was just stopped.
-                                    if let Ok(slot) = PLAYER.lock() {
-                                        if slot.as_ref().is_some_and(|p| Arc::ptr_eq(p, player))
-                                            && PLAYBACK.load(Ordering::SeqCst)
-                                            && generation == GENERATION.load(Ordering::SeqCst)
-                                        {
-                                            player.append(rodio::buffer::SamplesBuffer::new(
-                                                std::num::NonZeroU16::new(1).unwrap(),
-                                                std::num::NonZeroU32::new(decoder.1).unwrap(),
-                                                samples,
-                                            ));
-                                        }
+                                    if let Ok(slot) = PLAYER.lock()
+                                        && slot.as_ref().is_some_and(|p| Arc::ptr_eq(p, player))
+                                        && PLAYBACK.load(Ordering::SeqCst)
+                                        && generation == GENERATION.load(Ordering::SeqCst)
+                                    {
+                                        player.append(rodio::buffer::SamplesBuffer::new(
+                                            std::num::NonZeroU16::new(1).unwrap(),
+                                            std::num::NonZeroU32::new(decoder.1).unwrap(),
+                                            samples,
+                                        ));
                                     }
                                 } else {
                                     speaker = None;
@@ -659,10 +654,7 @@ fn worker(rx: mpsc::Receiver<(u64, Command)>) {
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    ()
-                }
+                    ) => {}
                 Err(_) => {
                     connection = None;
                     active = SocketState::Idle;
@@ -1043,10 +1035,7 @@ mod live_probe {
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                    ) =>
-                {
-                    ()
-                }
+                    ) => {}
                 Err(_) => break,
                 _ => (),
             }
