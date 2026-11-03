@@ -87,6 +87,16 @@ See the implementation record for scope and evidence. Physical-key speech and
 audible-speaker acceptance remain unobserved. Linux rendering/goldens were
 explicitly waived by the owner for this delivery.
 
+Follow-up on the same date: `3.2.0-local.16a1606` is installed from
+[PR #5](https://github.com/zj-linjie/hex/pull/5). Its feedback fix passed strict
+Clippy, 501 selected checks and independent release review. The owner then
+reported that physical right-Option start/stop sounds, live spoken metering,
+waiting and dismissal were normal, with left-Option dictation normal too.
+This is human-reported native acceptance, separate from the integrator's
+observed Start/Cancel pane check and synthetic local-API check. Physical
+short/chord/mouse discards, cold-device timing, other sound themes/zero volume,
+Reduce Motion, fullscreen and multiple displays were not separately accepted.
+
 ## Migration and recovery
 
 Import only the existing activated **assistant** identity, not the old cloud
