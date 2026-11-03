@@ -182,7 +182,50 @@ Observed before installation:
   exception-unwind section exceeds the compact-unwind encoding limit; it did
   not fail the build or tests.
 
-Native panel recording/cancel can establish hidden-overlay presentation without
-sending microphone audio. Physical keys, spoken-wave response, audible cues
-and the valid-release cloud path still require deliberate human acceptance;
-no automatic environmental recording is submitted for this follow-up.
+### Installed feedback build and native acceptance
+
+The feedback fix was delivered through
+[PR #5](https://github.com/zj-linjie/hex/pull/5), source
+`16a16061a5a7f4b8d95d73628961476dc3bf94d9`, merged into `dev` as
+`6ac04d5bec82744fab10537b8b950c1a457a94f8`. The installed app is
+`3.2.0-local.16a1606`; `production` was not moved. Independent final review
+reported no remaining source blocker or material simplification.
+
+Observed after installation on 2026-11-03:
+
+- The driver, helper and app retain the previous signing identity, designated
+  requirement and TeamIdentifier. Deep strict verification passed. The binary
+  has no Homebrew or dynamic Opus runtime dependency; local auto-updates stay off.
+- The previous PID exited before a complete verified data snapshot. This update
+  changed no saved settings or identity. After restart, permissions/listener and
+  the selected Qwen model were ready; settings, 62 vocabulary entries, scripts,
+  models, history and the identity matched the stopped-app backup. The original
+  bridge remained running. Later user setting edits were explicitly confirmed
+  as intentional and retained; all prior history entries remained present after
+  the owner's new dictations.
+- The installed local API returned HTTP 200 and the correct synthetic Mandarin
+  transcript. The assistant pane showed Connected and Start speaking → Recording
+  → Cancel. The integrator did not invoke End and send or submit environmental
+  audio. Those pane screenshots do not independently show the detached HUD.
+- The owner then physically tested both Option bindings and reported right-side
+  start/stop sounds, live spoken waves, release waiting/dismissal and left-side
+  dictation all normal. This human report supplies the native feedback acceptance
+  that the earlier indicator/fixture checks did not provide. No separate claim
+  is made about official reply audibility or tool effects in this follow-up.
+- The installed binary's dark/light assistant fixture renders were inspected.
+  The old signed app and new build-output bundle were zipped, extracted,
+  compared by hash/mode/link, and signature-verified before redundant bundles
+  were removed and unregistered. Spotlight lists only `/Applications/Hex.app`.
+
+The owner-only backup and evidence root is
+`~/Library/Application Support/hex-local-build-backups/assistant-feedback-20261103-16a1606/`.
+It includes `MAINTENANCE.md`, install/data/signature/verification reports,
+preinstall snapshots, test/review logs, and archive verification with rollback
+ZIP paths and hashes. This update made no settings migration, so rollback can
+restore the verified previous app while retaining current user data/settings.
+
+Remaining physical coverage limits: short/chord/mouse discards, cold-device
+timing, zero volume and other themes by ear, Reduce Motion, fullscreen and
+multiple displays. Automated coverage and the owner-confirmed normal path do
+not establish that unexecuted matrix. Linux golden and non-macOS/Nix build
+limits above remain unchanged.
