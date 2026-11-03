@@ -85,9 +85,39 @@ microphone/accessibility and the selected Qwen model. No identity import or
 runtime setting migration was needed for the protocol probes, which read the
 original assistant identity without printing it.
 
-Signed bundle installation and bounded identity/shortcut migration are the next
-owner-machine step. The owner-only installation backup records the actual
-installed version, hashes, unchanged signing requirement, data preservation,
-runtime status, API regression and duplicate-bundle cleanup. Physical-keyboard,
-live microphone and audible speaker acceptance must remain separate from the
-protocol and fixture results above.
+## Installed owner build
+
+`/Applications/Hex.app` is now `3.2.0-local.37c9524`, built from the merged
+code commit `37c9524095706fd4ca63618cabdae6f04193b6ba` (PRs #2 and #3 in
+the personal fork). The driver, helper and application were re-signed with the
+previous installed Apple Development identity. Designated requirement and
+TeamIdentifier matched exactly; deep strict signature verification passed.
+The binary has no Homebrew or dynamic Opus runtime dependency. Automatic
+updates remain off for this local build.
+
+The old app exited before a verified data backup. The owner migration changed
+only `dictation_hotkey`, `voice_assistant` and `labs.voice_assistant`: left
+Option local dictation, right Option assistant, assistant enabled and official
+reply playback on. The original activated identity was copied with mode 0600;
+its source was unchanged. All unrelated settings, 62 vocabulary entries,
+personal configuration/script, model files and retained history were preserved.
+The generated script-status file changed only from stopped to active.
+
+After normal restart, the installed app reported the same bindings, listener,
+Qwen model and ready microphone/accessibility permissions. Its authenticated
+local transcription API returned HTTP 200 and correct synthetic Mandarin.
+The native assistant pane showed Connected, separate left/right Option keys,
+and a working Start recording → Recording → Cancel sequence. No End and send
+was invoked during that microphone check.
+
+Both the previous signed bundle and the new build-output bundle were zipped,
+extracted, compared by file hash/mode/link and code-signature verified before
+their redundant bundle directories were removed and unregistered. Spotlight's
+only existing `anomaly.hex` app was `/Applications/Hex.app`. The owner-only
+installation backup holds `verification-report.json`, `MAINTENANCE.md`, data
+snapshots and evidence, including rollback archive hashes. No identity or user
+configuration was published.
+
+Physical-keyboard → live speech → tool interaction and audible-speaker
+acceptance remain unobserved. Protocol probes, synthetic host audio, native
+button capture/cancel and fixture renders do not replace those human checks.

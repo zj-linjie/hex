@@ -61,6 +61,16 @@ physical shortcut delivery, microphone capture, speaker output, official
 service availability or actual MCP action completion. Those results must be
 recorded separately after they are observed.
 
+Observed on 2026-11-03: strict Clippy and 564 native selected tests passed;
+official Xiaozhi probes returned STT, reply text and decodable Opus, and an
+instruction was followed by an actual Calculator launch while the existing
+bridge stayed running. The installed owner build `3.2.0-local.37c9524` showed
+Connected and completed native Start recording/Cancel, retained settings and
+permissions across restart, and passed the synthetic Qwen API regression.
+See the implementation record for scope and evidence. Physical-key speech and
+audible-speaker acceptance remain unobserved. Linux rendering/goldens were
+explicitly waived by the owner for this delivery.
+
 ## Migration and recovery
 
 Import only the existing activated **assistant** identity, not the old cloud
