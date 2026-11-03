@@ -203,6 +203,12 @@ does not prove the physical dictation shortcut; see the [feature index](README.m
 
 ## Sub-features
 
+The personal fork also offers [Voice assistant](voice-assistant.md), a
+macOS Labs opt-in with a separate configurable hold shortcut (right Option
+by default). The owner's migration sets local dictation to left Option.
+Assistant capture uses the same microphone timeline, is exclusive with
+dictation, and never changes Paste Last or pastes an assistant reply.
+
 ### Dictate Without Processing
 
 A second, optional dictation shortcut (issue 451, suggested by @ksajan). It

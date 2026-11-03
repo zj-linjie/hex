@@ -105,6 +105,7 @@ struct State {
 enum CaptureKind {
     Hotkey,
     Programmatic,
+    Assistant,
 }
 
 enum Command {
@@ -167,6 +168,7 @@ struct Owner {
     engine: Option<Arc<TranscriptionEngine>>,
     /// Whether the active capture streams once it is intentional.
     stream_capture: bool,
+    active_kind: CaptureKind,
     /// Whether the active capture keeps its audio when the microphone fails:
     /// a programmatic capture's owner still finishes it.
     keep_on_loss: bool,
@@ -315,6 +317,10 @@ impl DictationAudio {
         } else {
             Err(eyre!("microphone-unavailable"))
         }
+    }
+
+    pub fn start_assistant(&self, at: CaptureInstant) -> Result<bool> {
+        self.start_capture(at, CaptureKind::Assistant)
     }
 
     fn start_capture(&self, at: CaptureInstant, kind: CaptureKind) -> Result<bool> {
@@ -532,6 +538,7 @@ impl Owner {
             last_captured_through: None,
             engine,
             stream_capture: false,
+            active_kind: CaptureKind::Hotkey,
             keep_on_loss: false,
             stream_opened_at,
             discontinuity_at: None,
@@ -787,6 +794,8 @@ impl Owner {
                 let gap = self.chunk_gap(samples.len(), captured_through);
                 if let Some(gap) = gap
                     && gap <= MAX_PADDED_GAP
+                    && !(self.capture.is_recording()
+                        && matches!(self.active_kind, CaptureKind::Assistant))
                 {
                     // A short hiccup (often a Bluetooth stream starting) is
                     // filled with silence on the timeline instead of failing
@@ -863,6 +872,7 @@ impl Owner {
                 // at most the press's first moments. Reopen for the same press,
                 // like any other pending cold capture, instead of failing it.
                 if self.release_while_idle
+                    && !matches!(self.active_kind, CaptureKind::Assistant)
                     && let Some(at) = self.capture.tentative_start()
                 {
                     tracing::warn!(
@@ -873,7 +883,7 @@ impl Owner {
                     self.close_input();
                     self.pending_capture = Some(PendingCapture {
                         at,
-                        kind: CaptureKind::Hotkey,
+                        kind: self.active_kind,
                         intentional_at: None,
                         _capture: capture,
                     });
@@ -1021,8 +1031,9 @@ impl Owner {
     }
 
     fn start_capture_at(&mut self, kind: CaptureKind, at: CaptureInstant) {
+        self.active_kind = kind;
         match kind {
-            CaptureKind::Hotkey => self.capture.start_at(at),
+            CaptureKind::Hotkey | CaptureKind::Assistant => self.capture.start_at(at),
             CaptureKind::Programmatic => self.capture.start_programmatic_at(at),
         }
         // Only hotkey captures stream; programmatic ones need no speed-up.
@@ -1132,7 +1143,11 @@ mod tests {
     #[test]
     fn hotkey_captures_stream_once_intentional_and_others_do_not() {
         use crate::transcription::engine::Command as EngineCommand;
-        for kind in [CaptureKind::Hotkey, CaptureKind::Programmatic] {
+        for kind in [
+            CaptureKind::Hotkey,
+            CaptureKind::Programmatic,
+            CaptureKind::Assistant,
+        ] {
             for cancel in [false, true] {
                 let hotkey = matches!(kind, CaptureKind::Hotkey);
                 let (engine, commands) = TranscriptionEngine::for_test();
@@ -1963,6 +1978,70 @@ mod tests {
                 panic!("the reopened press must still produce its clip");
             };
             assert_eq!(clip.duration_ms(), 100);
+        }
+    }
+
+    #[test]
+    fn assistant_interruption_or_short_gap_discards_even_before_hold() {
+        use crate::transcription::engine::Command as EngineCommand;
+        for gap in [false, true] {
+            let (engine, commands) = TranscriptionEngine::for_test();
+            let (mut owner, input, _samples) = owner_for_test(false);
+            owner.engine = Some(Arc::new(engine));
+            owner.release_while_idle = true;
+            let at = capture_time();
+            assert!(control(&mut owner, |reply| Command::Start {
+                at,
+                kind: CaptureKind::Assistant,
+                reply
+            }));
+            let event = owner.input.recv_timeout(Duration::ZERO, false);
+            owner.handle_input(event);
+            assert!(matches!(
+                input.try_recv_event(),
+                Some(DictationAudioEvent::Reopened)
+            ));
+            owner.handle_input(RecoveringAudioInputEvent::Chunk {
+                samples: vec![0.25; 480],
+                captured_through: at + Duration::from_millis(10),
+            });
+            if gap {
+                // 100 ms of missing audio is normally padded for dictation.
+                owner.handle_input(RecoveringAudioInputEvent::Chunk {
+                    samples: vec![0.25; 480],
+                    captured_through: at + Duration::from_millis(120),
+                });
+                assert!(matches!(
+                    input.try_recv_event(),
+                    Some(DictationAudioEvent::CaptureDiscontinuity {
+                        was_recording: true,
+                        ..
+                    })
+                ));
+            } else {
+                owner.handle_input(RecoveringAudioInputEvent::Interrupted);
+                assert!(matches!(
+                    input.try_recv_event(),
+                    Some(DictationAudioEvent::Interrupted {
+                        was_recording: true,
+                        ..
+                    })
+                ));
+            }
+            assert!(!input.is_recording());
+            assert!(owner.pending_capture.is_none());
+            assert!(matches!(
+                control(&mut owner, |reply| Command::Finish {
+                    tail: Duration::ZERO,
+                    at: at + Duration::from_secs(1),
+                    reply
+                }),
+                Finish::Discard
+            ));
+            assert!(!commands.try_iter().any(|command| matches!(
+                command,
+                EngineCommand::Begin { .. } | EngineCommand::Feed { .. }
+            )));
         }
     }
 

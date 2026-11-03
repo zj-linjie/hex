@@ -539,6 +539,49 @@ pub(super) const SCENES: &[Scene] = &[
             view.screen_needs_restart = true;
         })
     }),
+    ("mac-assistant-needs-identity", |ui| {
+        *ui = mac_fixture();
+        ui.settings.labs.voice_assistant = true;
+        ui.settings.dictation_hotkey = crate::app_settings::HotkeyBinding {
+            modifiers: crate::app_settings::HotkeyModifiers {
+                option: Some(crate::app_settings::ModifierSide::Left),
+                ..Default::default()
+            },
+            key: None,
+        };
+        ui.pane = Pane::VoiceAssistant;
+        ui.assistant.fixture = Some(crate::voice_assistant::Snapshot {
+            enabled: true,
+            playback: true,
+            status: crate::voice_assistant::Status::NeedsIdentity,
+            turn_id: None,
+            audio_error: None,
+            turns: vec![],
+        });
+    }),
+    ("mac-assistant-reply", |ui| {
+        *ui = mac_fixture();
+        ui.settings.labs.voice_assistant = true;
+        ui.settings.dictation_hotkey = crate::app_settings::HotkeyBinding {
+            modifiers: crate::app_settings::HotkeyModifiers {
+                option: Some(crate::app_settings::ModifierSide::Left),
+                ..Default::default()
+            },
+            key: None,
+        };
+        ui.pane = Pane::VoiceAssistant;
+        ui.assistant.fixture = Some(crate::voice_assistant::Snapshot {
+            enabled: true,
+            playback: true,
+            status: crate::voice_assistant::Status::Ready,
+            turn_id: Some(1),
+            audio_error: None,
+            turns: vec![crate::voice_assistant::Turn {
+                transcript: "Open Obsidian".into(),
+                reply: "Obsidian is open.".into(),
+            }],
+        });
+    }),
     ("mac-voice-filter", |ui| {
         *ui = mac_fixture();
         ui.pane = Pane::VoiceFilter;

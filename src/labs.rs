@@ -61,6 +61,7 @@ impl Audience {
 pub enum Feature {
     Meetings,
     VoiceFilter,
+    VoiceAssistant,
     Playground,
     LiveText,
     LiveChapters,
@@ -94,9 +95,10 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 33] = [
         Self::Meetings,
         Self::VoiceFilter,
+        Self::VoiceAssistant,
         Self::Playground,
         Self::LiveText,
         Self::LiveChapters,
@@ -151,6 +153,7 @@ impl Feature {
     pub const fn audience(self) -> Audience {
         match self {
             Self::Meetings
+            | Self::VoiceAssistant
             | Self::VoiceFilter
             | Self::Playground
             | Self::LiveText
@@ -209,7 +212,11 @@ impl Feature {
 
     fn on_this_os(self) -> bool {
         match self {
-            Self::Meetings | Self::LiveChapters | Self::SubtitleExport | Self::StopWhenCallEnds => {
+            Self::VoiceAssistant
+            | Self::Meetings
+            | Self::LiveChapters
+            | Self::SubtitleExport
+            | Self::StopWhenCallEnds => {
                 cfg!(target_os = "macos")
             }
             Self::VoiceFilter => cfg!(any(target_os = "macos", target_os = "linux")),
@@ -248,6 +255,7 @@ impl Feature {
         match self {
             Self::Meetings => "meetings",
             Self::VoiceFilter => "voice-filter",
+            Self::VoiceAssistant => "voice-assistant",
             Self::Playground => "playground",
             Self::LiveText => "live-text",
             Self::LiveChapters => "live-chapters",
@@ -286,6 +294,7 @@ impl Feature {
         match self {
             Self::Meetings => "meetings.enabled",
             Self::VoiceFilter => "experimental.hex_microphone",
+            Self::VoiceAssistant => "labs.voice_assistant",
             Self::Playground => "labs.playground",
             Self::LiveText => "labs.live_text",
             Self::LiveChapters => "labs.live_chapters",
@@ -324,6 +333,7 @@ impl Feature {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Meetings => "Record calls and keep transcripts (its own pane)",
+            Self::VoiceAssistant => "Talk to your Xiaozhi assistant (macOS)",
             Self::VoiceFilter => {
                 "Hex Microphone virtual input and real-time voice filters (its own pane)"
             }
@@ -414,6 +424,7 @@ impl Feature {
         match self {
             Self::Meetings => settings.meetings.enabled,
             Self::VoiceFilter => settings.experimental.hex_microphone,
+            Self::VoiceAssistant => settings.labs.voice_assistant,
             Self::Playground => settings.labs.playground,
             Self::LiveText => settings.labs.live_text,
             Self::LiveChapters => settings.labs.live_chapters,
@@ -458,6 +469,7 @@ impl Feature {
             &mut settings.keyboard_model_switching.enabled,
             &mut settings.pause_browser_media,
             &mut settings.share_dictation_shortcut,
+            &mut labs.voice_assistant,
             &mut labs.playground,
             &mut labs.live_text,
             &mut labs.live_chapters,
@@ -483,6 +495,7 @@ impl Feature {
             &mut labs.recent_dictations,
             &mut labs.skip_pauses,
             &mut labs.stop_when_call_ends,
+            &mut labs.output_fixes,
         ]
     }
 
@@ -495,13 +508,19 @@ impl Feature {
         match self {
             Self::Meetings => settings.meetings.enabled = on,
             Self::VoiceFilter => settings.experimental.hex_microphone = on,
+            Self::VoiceAssistant => settings.labs.voice_assistant = on,
             Self::Playground => settings.labs.playground = on,
             Self::LiveText => settings.labs.live_text = on,
             Self::LiveChapters => settings.labs.live_chapters = on,
             Self::VocabularyBiasing => settings.labs.vocabulary_biasing = on,
             Self::TerminalPaste => settings.paste_with_shift = on,
             Self::KeyboardModelSwitching => settings.keyboard_model_switching.enabled = on,
-            Self::MouseShortcuts => settings.labs.mouse_shortcuts = on,
+            Self::MouseShortcuts => {
+                settings.labs.mouse_shortcuts = on;
+                if !on {
+                    settings.repair_mouse_shortcuts();
+                }
+            }
             Self::PauseBrowser => settings.pause_browser_media = on,
             Self::ShareShortcut => settings.share_dictation_shortcut = on,
             Self::UnloadIdle => settings.labs.unload_idle = on,

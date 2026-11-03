@@ -462,6 +462,7 @@ const OBSERVATION_MASK: u64 = 1_u64 << EVENT_FLAGS_CHANGED;
 fn mouse_input(button: u16, down: bool, flags: u64, hotkeys: RuntimeHotkeys) -> Option<InputEvent> {
     let code = crate::app_settings::HotkeyKey::mouse_code(button)?;
     let bound = [
+        hotkeys.assistant,
         Some(hotkeys.dictation),
         hotkeys.raw_dictation,
         hotkeys.second_dictation,
@@ -1418,6 +1419,7 @@ impl ShortcutSuppression {
         self.process_all(
             input,
             RuntimeHotkeys {
+                assistant: None,
                 dictation: hotkey,
                 paste_last: Some(paste_last),
                 paste_meeting: Some(paste_meeting),
@@ -1584,6 +1586,8 @@ pub struct DictationHotkey {
     pressed_keys: HashSet<u16>,
     double_tap_enabled: bool,
     double_tap_only: bool,
+    /// Discard the entire hold for any extra key or modifier, even after the hold threshold.
+    strict_chords: bool,
     /// Press to start, press again to finish: releasing locks the capture.
     toggle: bool,
     /// Labs › Tap or hold, read at each Toggle release: a press held past
@@ -1638,6 +1642,7 @@ impl DictationHotkey {
             pressed_keys: HashSet::new(),
             double_tap_enabled,
             double_tap_only: false,
+            strict_chords: false,
             toggle: false,
             tap_or_hold: TAP_OR_HOLD,
             binding,
@@ -1668,6 +1673,10 @@ impl DictationHotkey {
 
     pub fn suppresses_recognition(&self) -> bool {
         !matches!(self.state, State::Idle { .. })
+    }
+
+    pub fn set_strict_chords(&mut self, enabled: bool) {
+        self.strict_chords = enabled;
     }
 
     pub fn set_double_tap_enabled(&mut self, enabled: bool) {
@@ -2228,7 +2237,11 @@ impl DictationHotkey {
             State::Recording { started_at, .. }
                 // Delayed HID evidence from before the press is not a chord.
                 if !(matches!(event, InputEvent::PhysicalKeyDown { .. }) && now < started_at)
-                    && ((now.duration_since(started_at) < MINIMUM_HOLD_DURATION
+                    && ((self.strict_chords
+                        && (unrelated_key_down
+                            || extra_modifiers
+                            || matches!(event, InputEvent::MouseDown)))
+                        || (now.duration_since(started_at) < MINIMUM_HOLD_DURATION
                         && (chord_key_down
                             || matches!(event, InputEvent::MouseDown)
                             || extra_modifiers))
@@ -2492,7 +2505,8 @@ fn trigger_is_physically_down(binding: RuntimeHotkey) -> bool {
 mod tests {
     use super::*;
     use crate::app_settings::{
-        COMMAND_KEY_MASK, CONTROL_KEY_MASK, FUNCTION_KEY_MASK, OPTION_KEY_MASK, SHIFT_KEY_MASK,
+        COMMAND_KEY_MASK, CONTROL_KEY_MASK, FUNCTION_KEY_MASK, LEFT_COMMAND_MASK, LEFT_OPTION_MASK,
+        OPTION_KEY_MASK, RIGHT_COMMAND_MASK, RIGHT_OPTION_MASK, SHIFT_KEY_MASK,
     };
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -2931,6 +2945,7 @@ mod tests {
 
     fn mouse_hotkeys() -> RuntimeHotkeys {
         RuntimeHotkeys {
+            assistant: None,
             dictation: HotkeyBinding {
                 modifiers: Default::default(),
                 key: crate::app_settings::HotkeyKey::mouse(3),
@@ -2942,6 +2957,33 @@ mod tests {
             raw_dictation: None,
             second_dictation: None,
         }
+    }
+
+    #[test]
+    fn an_assistant_only_mouse_binding_receives_both_edges() {
+        let binding = HotkeyBinding {
+            modifiers: Default::default(),
+            key: crate::app_settings::HotkeyKey::mouse(4),
+        }
+        .runtime();
+        let hotkeys = RuntimeHotkeys {
+            assistant: Some(binding),
+            ..RuntimeHotkeys::default()
+        };
+        let now = capture_time();
+        let mut machine = DictationHotkey::new(now, false, binding);
+        machine.set_strict_chords(true);
+        assert_eq!(
+            machine.process(mouse_input(4, true, 0, hotkeys).unwrap(), now),
+            Some(HotkeyAction::Start)
+        );
+        assert_eq!(
+            machine.process(
+                mouse_input(4, false, 0, hotkeys).unwrap(),
+                now + Duration::from_secs(1)
+            ),
+            Some(HotkeyAction::Finish)
+        );
     }
 
     #[test]
@@ -3500,6 +3542,140 @@ mod tests {
         }
         assert!(hotkey.pressed_keys.contains(&48));
         at + Duration::from_millis(120)
+    }
+
+    #[test]
+    fn assistant_chord_breaker_is_due_once_only_for_valid_holds() {
+        use crate::app_settings::{HotkeyModifiers, ModifierSide};
+        let binding = RuntimeHotkey {
+            modifiers: HotkeyModifiers {
+                option: Some(ModifierSide::Right),
+                ..Default::default()
+            },
+            key_code: None,
+        };
+        let held = OPTION_KEY_MASK | RIGHT_OPTION_MASK;
+        let now = capture_time();
+        let mut hold = DictationHotkey::with_binding(false, now, false, binding);
+        hold.set_strict_chords(true);
+        assert_eq!(
+            hold.process(InputEvent::Flags(held), now),
+            Some(HotkeyAction::Start)
+        );
+        assert!(!hold.take_chord_break(now + Duration::from_millis(299)));
+        assert!(hold.take_chord_break(now + Duration::from_millis(300)));
+        assert!(!hold.take_chord_break(now + Duration::from_secs(1)));
+        let mut tap = DictationHotkey::with_binding(false, now, false, binding);
+        tap.process(InputEvent::Flags(held), now);
+        tap.process(InputEvent::Flags(0), now + Duration::from_millis(100));
+        assert!(!tap.take_chord_break(now + Duration::from_secs(1)));
+        let mut chord = DictationHotkey::with_binding(false, now, false, binding);
+        chord.set_strict_chords(true);
+        chord.process(InputEvent::Flags(held), now);
+        chord.process(
+            InputEvent::Flags(held | COMMAND_KEY_MASK | LEFT_COMMAND_MASK),
+            now + Duration::from_millis(100),
+        );
+        assert!(!chord.take_chord_break(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn assistant_discards_a_mouse_chord_after_the_hold_threshold() {
+        let binding = HotkeyBinding {
+            modifiers: crate::app_settings::HotkeyModifiers {
+                option: Some(crate::app_settings::ModifierSide::Right),
+                ..Default::default()
+            },
+            key: None,
+        }
+        .runtime();
+        let now = capture_time();
+        let mut machine = DictationHotkey::with_binding(false, now, false, binding);
+        machine.set_strict_chords(true);
+        machine.process(InputEvent::Flags(OPTION_KEY_MASK | RIGHT_OPTION_MASK), now);
+        assert!(matches!(
+            machine.process(InputEvent::MouseDown, now + Duration::from_millis(450)),
+            Some(HotkeyAction::Discard(DiscardCause::Mouse))
+        ));
+        assert_eq!(
+            machine.process(InputEvent::Flags(0), now + Duration::from_millis(600)),
+            None
+        );
+    }
+
+    #[test]
+    fn right_option_assistant_is_side_specific_and_extra_modifiers_cancel_late() {
+        use crate::app_settings::{HotkeyModifiers, ModifierSide};
+        let binding = RuntimeHotkey {
+            modifiers: HotkeyModifiers {
+                option: Some(ModifierSide::Right),
+                ..Default::default()
+            },
+            key_code: None,
+        };
+        let now = capture_time();
+        let mut machine = DictationHotkey::with_binding(false, now, false, binding);
+        machine.set_strict_chords(true);
+        let left = OPTION_KEY_MASK | LEFT_OPTION_MASK;
+        let right = OPTION_KEY_MASK | RIGHT_OPTION_MASK;
+        assert_eq!(machine.process(InputEvent::Flags(left), now), None);
+        machine.process(InputEvent::Flags(0), now + Duration::from_millis(10));
+        assert_eq!(
+            machine.process(InputEvent::Flags(right), now + Duration::from_millis(20)),
+            Some(HotkeyAction::Start)
+        );
+        assert_eq!(
+            machine.process(
+                InputEvent::Flags(right | COMMAND_KEY_MASK | LEFT_COMMAND_MASK),
+                now + Duration::from_secs(1)
+            ),
+            Some(HotkeyAction::Discard(DiscardCause::ExtraModifier))
+        );
+        assert_eq!(
+            machine.process(InputEvent::Flags(0), now + Duration::from_secs(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn left_command_assistant_discards_system_chords_and_passes_them_through() {
+        use crate::app_settings::{HotkeyModifiers, ModifierSide};
+        let binding = RuntimeHotkey {
+            modifiers: HotkeyModifiers {
+                command: Some(ModifierSide::Left),
+                ..Default::default()
+            },
+            key_code: None,
+        };
+        let left = COMMAND_KEY_MASK | LEFT_COMMAND_MASK;
+        let right = COMMAND_KEY_MASK | RIGHT_COMMAND_MASK;
+        for code in [8, 9, 48] {
+            // C, V, Tab
+            let now = capture_time();
+            let mut machine = DictationHotkey::with_binding(false, now, false, binding);
+            machine.set_strict_chords(true);
+            assert_eq!(machine.process(InputEvent::Flags(right), now), None);
+            machine.process(InputEvent::Flags(0), now + Duration::from_millis(10));
+            assert_eq!(
+                machine.process(InputEvent::Flags(left), now + Duration::from_millis(20)),
+                Some(HotkeyAction::Start)
+            );
+            let key = InputEvent::Key {
+                code,
+                down: true,
+                flags: left,
+            };
+            assert!(matches!(
+                machine.process(key, now + Duration::from_millis(450)),
+                Some(HotkeyAction::Discard(_))
+            ));
+            let mut suppression = ShortcutSuppression::default();
+            let hotkeys = RuntimeHotkeys {
+                assistant: Some(binding),
+                ..RuntimeHotkeys::default()
+            };
+            assert!(!suppression.process_all(key, hotkeys, true, false));
+        }
     }
 
     #[test]

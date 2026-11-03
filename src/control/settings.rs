@@ -215,6 +215,16 @@ const KEYS: &[Key] = &[
          turns it off",
     ),
     key(
+        "voice_assistant.hotkey",
+        Kind::Shortcut(HotkeySlot::Assistant),
+        "Voice assistant hold shortcut (macOS)",
+    ),
+    key(
+        "voice_assistant.playback",
+        Kind::Bool,
+        "Play the assistant reply audio",
+    ),
+    key(
         "show_dock_icon",
         Kind::Bool,
         "Keep Hex in the Dock when Settings is closed (macOS)",
@@ -386,6 +396,11 @@ const KEYS: &[Key] = &[
         "labs.stop_when_call_ends",
         Kind::Bool,
         "Labs: a meeting recording Hex started on its own stops 30 s after its call app leaves the microphone and goes quiet, unless you keep recording (macOS)",
+    ),
+    key(
+        "labs.voice_assistant",
+        Kind::Bool,
+        "Labs: Xiaozhi voice assistant (macOS)",
     ),
     key(
         "labs.output_fixes",
@@ -586,6 +601,8 @@ const CAPTURE_KEYS: &[Key] = &[];
 /// `rune_ui::capabilities` name), the same one that shows their row in the
 /// window. The first matching prefix decides.
 const NEEDS: &[(&str, &str)] = &[
+    ("voice_assistant.", "voice_assistant"),
+    ("labs.voice_assistant", "voice_assistant"),
     ("meetings.calendar.", "calendar"),
     ("meetings.", "meetings"),
     ("labs.live_chapters", "meetings"),
@@ -841,12 +858,14 @@ pub fn apply(
         | "paste_last_hotkey"
         | "raw_dictation_hotkey"
         | "second_dictation_hotkey"
+        | "voice_assistant.hotkey"
         | "capture.hotkey" => {
             let Kind::Shortcut(slot) = key.kind else {
                 unreachable!("shortcut keys have the shortcut kind");
             };
             let binding = match slot {
                 HotkeySlot::Dictation => Some(&candidate.dictation_hotkey),
+                HotkeySlot::Assistant => Some(&candidate.voice_assistant.hotkey),
                 HotkeySlot::PasteLast => candidate.paste_last_hotkey.as_ref(),
                 HotkeySlot::RawDictation => candidate.raw_dictation_hotkey.as_ref(),
                 HotkeySlot::SecondDictation => candidate.second_dictation_hotkey.as_ref(),
@@ -910,6 +929,9 @@ pub fn apply(
                 "The capture shortcut is already in use; set capture.hotkey to another \
                  shortcut first",
             ));
+        }
+        "labs.mouse_shortcuts" if !candidate.labs.mouse_shortcuts => {
+            candidate.repair_mouse_shortcuts()
         }
         "labs.standalone_special_keys" => candidate.repair_special_keys(),
         "labs.parakeet_ultra" if !candidate.labs.parakeet_ultra => {
@@ -1087,9 +1109,13 @@ fn parse(key: &Key, raw: &str, shortcuts: &ShortcutRules) -> Result<Value, Contr
             Ok(Value::String(path.to_string_lossy().into_owned()))
         }
         Kind::Json => serde_json::from_str(raw).map_err(|error| invalid(name, &error.to_string())),
-        Kind::Shortcut(_) => {
-            let binding =
-                parse_hotkey(trimmed, shortcuts.key_named).map_err(|why| invalid(name, &why))?;
+        Kind::Shortcut(slot) => {
+            let binding = if slot == HotkeySlot::Assistant {
+                parse_hotkey_with_sides(trimmed, shortcuts.key_named, true)
+            } else {
+                parse_hotkey(trimmed, shortcuts.key_named)
+            }
+            .map_err(|why| invalid(name, &why))?;
             serde_json::to_value(binding)
                 .map_err(|error| ControlError::new("internal", error.to_string()))
         }
@@ -1102,6 +1128,14 @@ fn parse(key: &Key, raw: &str, shortcuts: &ShortcutRules) -> Result<Value, Contr
 pub fn parse_hotkey(
     text: &str,
     key_named: fn(&str) -> Result<HotkeyKey, String>,
+) -> Result<HotkeyBinding, String> {
+    parse_hotkey_with_sides(text, key_named, false)
+}
+
+fn parse_hotkey_with_sides(
+    text: &str,
+    key_named: fn(&str) -> Result<HotkeyKey, String>,
+    allow_sided_key: bool,
 ) -> Result<HotkeyBinding, String> {
     let mut modifiers = HotkeyModifiers::default();
     let mut key = None;
@@ -1161,7 +1195,7 @@ pub fn parse_hotkey(
     }
     let binding = HotkeyBinding { modifiers, key };
     if let Some(key) = &binding.key {
-        if sided {
+        if sided && !allow_sided_key {
             return Err("left- and right- apply only to shortcuts without a key".into());
         }
         if modifiers.function {
@@ -1369,6 +1403,56 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), keys().count(), "a key is listed twice");
+    }
+
+    #[test]
+    fn assistant_controls_are_registered_and_platform_gated() {
+        for name in [
+            "labs.voice_assistant",
+            "voice_assistant.hotkey",
+            "voice_assistant.playback",
+        ] {
+            let entry = keys()
+                .find(|entry| entry.key == name)
+                .expect("assistant setting");
+            assert!(entry.read_only.is_none(), "{name} must be editable");
+            assert_eq!(needs(name), Some("voice_assistant"));
+        }
+        let mut settings = AppSettings::default();
+        settings.dictation_hotkey = HotkeyBinding {
+            modifiers: crate::app_settings::HotkeyModifiers::option(),
+            key: None,
+        };
+        settings
+            .dictation_hotkey
+            .set_standalone_side(crate::app_settings::ModifierSide::Left);
+        let changed = apply(&settings, "voice_assistant.playback", "false", &rules()).unwrap();
+        assert!(!changed.settings.voice_assistant.playback);
+        assert_eq!(changed.settings.dictation_hotkey, settings.dictation_hotkey);
+    }
+
+    #[test]
+    fn assistant_keyed_chords_round_trip_with_sides() {
+        let initial = AppSettings::default();
+        let change = apply(
+            &initial,
+            "voice_assistant.hotkey",
+            "right-option+space",
+            &rules(),
+        )
+        .unwrap();
+        assert_eq!(
+            change.settings.voice_assistant.hotkey.modifiers.option,
+            Some(ModifierSide::Right)
+        );
+        let formatted = format_hotkey(&change.settings.voice_assistant.hotkey);
+        assert_eq!(formatted, "right-option+space");
+        let restored = apply(&initial, "voice_assistant.hotkey", &formatted, &rules()).unwrap();
+        assert_eq!(
+            restored.settings.voice_assistant.hotkey,
+            change.settings.voice_assistant.hotkey
+        );
+        assert!(parse_hotkey("right-option+space", rules().key_named).is_err());
     }
 
     #[test]

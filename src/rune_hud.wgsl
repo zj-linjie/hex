@@ -211,6 +211,20 @@ fn dot_scope_fragment(in: Varyings) -> @location(0) vec4f {
         }
     }
 
+    // A small, high-contrast A marks the assistant channel in both capture
+    // and waiting phases. Dot scope continues to follow the real meter.
+    if (u.field.y > 0.5) {
+        let p = point - vec2f(half_size.x - 10.0, 0.0);
+        let badge = rounded_box(p, vec2f(5.5, 6.5), 2.5);
+        composite(&result, vec3f(0.04, 0.15, 0.18), shape * coverage(badge, aa));
+        let left = abs(p.x + 2.0 - 0.45 * p.y);
+        let right = abs(p.x - 2.0 + 0.45 * p.y);
+        let legs = min(left, right);
+        let bar = max(abs(p.y - 1.0) - 0.6, abs(p.x) - 1.6);
+        let glyph = min(max(legs - 0.55, abs(p.y) - 3.5), bar);
+        composite(&result, vec3f(0.65, 0.97, 0.92), shape * coverage(glyph, aa));
+    }
+
     result *= u.opacity;
     // The island is part of the notch, solid black however faded the
     // plate's contents are.

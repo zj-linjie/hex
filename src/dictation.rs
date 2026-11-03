@@ -282,6 +282,18 @@ impl DictationClip {
     pub fn into_transcription_samples(self) -> Vec<f32> {
         self.samples
     }
+
+    /// Assistant uploads contain only the deliberate hold, never the local
+    /// dictation pre-roll or release tail. Gate silence on that same interval.
+    #[cfg(target_os = "macos")]
+    pub fn into_assistant_samples(mut self) -> Option<Vec<f32>> {
+        let end = self.samples.len().saturating_sub(self.tail_samples);
+        self.samples.truncate(end);
+        self.samples.drain(..self.press_samples.min(end));
+        self.press_samples = 0;
+        self.tail_samples = 0;
+        (!self.is_near_silent()).then_some(self.samples)
+    }
 }
 
 fn loudest_window_dbfs(samples: &[f32]) -> f32 {
@@ -959,6 +971,18 @@ mod tests {
         (0..samples).map(move |index| {
             amplitude * (2.0 * std::f32::consts::PI * 220.0 * index as f32 / 16_000.0).sin()
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn assistant_silence_gate_ignores_speech_before_press_and_after_release() {
+        let mut samples: Vec<f32> = tone(0.3, 7_200).collect();
+        samples.extend(std::iter::repeat_n(0.0, 16_000));
+        samples.extend(tone(0.3, 3_200));
+        let mut clip = DictationClip::for_test(samples);
+        clip.press_samples = 7_200;
+        clip.tail_samples = 3_200;
+        assert!(clip.into_assistant_samples().is_none());
     }
 
     #[test]

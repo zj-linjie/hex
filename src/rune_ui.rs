@@ -62,6 +62,7 @@ mod spark;
 #[cfg(target_os = "macos")]
 pub(crate) mod story_link;
 mod vocabulary;
+mod voice_assistant;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -180,7 +181,7 @@ pub(crate) fn app(connect: host::Connect) -> rune::App<Ui> {
 
 /// Beside a setting an organization locked (`crate::policy`).
 fn managed_note() -> &'static str {
-    tr("Managed by your organization")
+    tr(crate::policy::MANAGED_NOTE)
 }
 
 /// A `hex://` link the system opened with Hex: a story link opens the window
@@ -449,6 +450,7 @@ pub(crate) fn shortcut_rule(
     use crate::app_settings::HotkeySlot;
     let target = match slot {
         HotkeySlot::Dictation => ShortcutTarget::Dictation,
+        HotkeySlot::Assistant => ShortcutTarget::Assistant,
         HotkeySlot::PasteLast => ShortcutTarget::PasteLast,
         HotkeySlot::RawDictation => ShortcutTarget::RawDictation,
         #[cfg(hex_capture)]
@@ -684,6 +686,7 @@ pub(crate) struct Ui {
     host: platform::PlatformHost,
     meetings: meetings::MeetingsPane,
     fun: fun::FunPane,
+    assistant: voice_assistant::AssistantPane,
     activity: activity::ActivityPane,
     /// HUD Lab's preset was copied since it last changed.
     hud_copied: bool,
@@ -787,6 +790,7 @@ impl Ui {
             host: platform::PlatformHost::Local(Default::default()),
             meetings: meetings::MeetingsPane::default(),
             fun: fun::FunPane::default(),
+            assistant: voice_assistant::AssistantPane::default(),
             activity: activity::ActivityPane::default(),
             hud_copied: false,
             hud_saved: false,
@@ -1234,6 +1238,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     }
     changed |= ui.modes.poll(ui.live());
     changed |= modes::poll_chooser(ui);
+    changed |= voice_assistant::poll(ui);
     changed |= model_import::poll(ui);
     changed |= found::poll(ui);
     let login_unknown = ui.platform.login_item.is_none();
@@ -1339,6 +1344,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         #[cfg(hex_capture)]
         Pane::Annotate => (Vec::new(), scrawl::pane(ui, p, &mut layer)),
         Pane::VoiceFilter => (Vec::new(), fun::pane(ui, p)),
+        Pane::VoiceAssistant => (Vec::new(), voice_assistant::pane(ui, p)),
         Pane::HudLab => hud_lab::pane(ui, p),
         Pane::Activity => activity::pane(ui, p),
     };

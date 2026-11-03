@@ -28,6 +28,9 @@ Hex                                      // macOS release
 have detailed maps.
 Agents can [read retained transcripts](transcript-cli.md) and
 [control the running app](control-cli.md) with the release CLI.
+[Voice assistant](voice-assistant.md) is the personal fork's macOS Labs
+opt-in: right Option talks to Xiaozhi and its existing MCP bridge; local
+dictation stays on its own shortcut.
 [Labs](labs.md) is one switch, on by default, for every unfinished feature.
 Its Restore shortcut default toggle (off by default) puts a Restore default
 button beside Paste last dictation's shortcut (#613); its Sort and filter

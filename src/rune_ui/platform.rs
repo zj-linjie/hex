@@ -33,6 +33,7 @@ pub(super) struct Capabilities {
     /// Meeting recording and its pane, with the recordings and their
     /// settings (beta, in Labs).
     pub(super) meetings: bool,
+    pub(super) voice_assistant: bool,
     /// Calendar meeting reminders: the Calendar card under Meetings
     /// (macOS, EventKit).
     pub(super) calendar: bool,
@@ -67,6 +68,7 @@ pub(super) struct Capabilities {
 impl Capabilities {
     pub(super) const LINUX: Self = Self {
         os: Os::Linux,
+        voice_assistant: false,
         meetings: true,
         calendar: false,
         permissions: false,
@@ -84,6 +86,7 @@ impl Capabilities {
 
     pub(super) const MACOS: Self = Self {
         os: Os::Macos,
+        voice_assistant: true,
         meetings: true,
         calendar: true,
         permissions: true,
@@ -101,6 +104,7 @@ impl Capabilities {
 
     pub(super) const WINDOWS: Self = Self {
         os: Os::Windows,
+        voice_assistant: false,
         meetings: true,
         calendar: false,
         permissions: false,
@@ -557,8 +561,17 @@ pub(super) enum MeetingRequest {
     ChooseFolder,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AssistantRequest {
+    Reconnect,
+    Start,
+    Finish,
+    Cancel,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum PlatformRequest {
+    Assistant(AssistantRequest),
     /// Request the microphone or open the System Settings guide.
     Permission(PermissionAction),
     /// Screen & System Audio Recording, for meetings.
@@ -803,6 +816,10 @@ impl Difference {
 #[cfg(test)]
 const DIFFERENCES: &[(&str, Difference)] = &[
     (
+        "voice_assistant",
+        Difference::Pending("Xiaozhi assistant input and playback are implemented on macOS"),
+    ),
+    (
         "calendar",
         Difference::OsPattern("EventKit; there is no cross-platform calendar source"),
     ),
@@ -845,10 +862,11 @@ const DIFFERENCES: &[(&str, Difference)] = &[
 impl Capabilities {
     /// Every capability by name. Destructuring makes a new capability a
     /// compile error here until it is named.
-    pub(super) fn fields(self) -> [(&'static str, bool); 13] {
+    pub(super) fn fields(self) -> [(&'static str, bool); 14] {
         let Self {
             os: _,
             meetings,
+            voice_assistant,
             calendar,
             permissions,
             launch_at_login,
@@ -864,6 +882,7 @@ impl Capabilities {
         } = self;
         [
             ("meetings", meetings),
+            ("voice_assistant", voice_assistant),
             ("calendar", calendar),
             ("permissions", permissions),
             ("launch_at_login", launch_at_login),

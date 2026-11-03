@@ -16,6 +16,18 @@ signed helper packaging and a signed first-consumer integration remain. Follow t
 [embedded desktop delivery plan](docs/plans/typescript-sdk.md); Apple Silicon
 macOS is the proposed first target, not a cross-platform availability promise.
 
+## Voice Assistant For The Personal Fork
+
+The [voice assistant PRD](docs/plans/voice-assistant-prd.md) defines a
+macOS Labs feature: Left Option keeps local dictation; Right Option talks
+to the existing Xiaozhi official assistant, whose configured MCP bridge
+executes the tools. Both shortcuts remain configurable. Hex replaces the old
+voice client, keeps the bridge, and shows a waveform and text replies with
+optional Xiaozhi TTS playback. See the [feature map](docs/features/voice-assistant.md)
+and [implementation record](docs/plans/voice-assistant-implementation.md)
+for delivered behavior and observed verification. Native checks remain explicit;
+fixtures do not establish microphone-to-tool execution.
+
 ## Validate The Rune Desktop App
 
 The window, menu-bar and tray hosts, HUDs, meeting capsules, and onboarding now

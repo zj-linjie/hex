@@ -186,6 +186,11 @@ const PATHS: &[(&str, &str)] = &[
         "mac-scrawl-restart",
         "Window/Annotate/Screen Recording needs restart",
     ),
+    (
+        "mac-assistant-needs-identity",
+        "Window/Voice Assistant/Needs identity",
+    ),
+    ("mac-assistant-reply", "Window/Voice Assistant/Reply"),
     ("mac-voice-filter", "Window/Voice Filter/Voice Filter"),
     ("mac-voice-filter-muted", "Window/Voice Filter/Muted"),
     (

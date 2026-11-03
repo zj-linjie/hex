@@ -73,6 +73,7 @@ pub(super) enum Pane {
     /// The Hex Microphone's driver, tuning, and try-it demo (macOS, while
     /// its Labs toggle is on).
     VoiceFilter,
+    VoiceAssistant,
     /// The dictation indicator's tuning scene (Playground only).
     HudLab,
     /// Legacy event-log inspector scene (Playground only).
@@ -90,6 +91,7 @@ impl Pane {
         #[cfg(hex_capture)]
         Pane::Annotate,
         Pane::VoiceFilter,
+        Pane::VoiceAssistant,
         Pane::HudLab,
         Pane::Activity,
     ];
@@ -101,6 +103,7 @@ impl Pane {
             Pane::Meetings => caps.meetings && meetings::available(ui),
             // On from Labs, or kept by a driver apps already use.
             Pane::VoiceFilter => caps.fun && fun::running(ui),
+            Pane::VoiceAssistant => caps.voice_assistant && ui.settings.labs.voice_assistant,
             #[cfg(hex_capture)]
             Pane::Annotate => ui.platform.scrawl.is_some(),
             _ => true,
@@ -117,6 +120,7 @@ impl Pane {
             #[cfg(hex_capture)]
             Pane::Annotate => tr("Annotate"),
             Pane::VoiceFilter => tr("Voice Filter"),
+            Pane::VoiceAssistant => tr("Voice Assistant"),
             Pane::HudLab => "HUD Lab",
             Pane::Activity => tr("Activity"),
         }
@@ -132,6 +136,7 @@ impl Pane {
             #[cfg(hex_capture)]
             Pane::Annotate => "nav-annotate",
             Pane::VoiceFilter => "nav-voice-filter",
+            Pane::VoiceAssistant => "nav-voice-assistant",
             Pane::HudLab => "nav-hud-lab",
             Pane::Activity => "nav-activity",
         }
@@ -147,6 +152,7 @@ impl Pane {
             #[cfg(hex_capture)]
             Pane::Annotate => &SCRAWL_ICON,
             Pane::VoiceFilter => &VOICE_FILTER_ICON,
+            Pane::VoiceAssistant => &VOICE_FILTER_ICON,
             Pane::HudLab => &HUD_LAB_ICON,
             Pane::Activity => &ACTIVITY_ICON,
         }
