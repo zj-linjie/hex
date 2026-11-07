@@ -340,6 +340,8 @@ fn tables() -> &'static [HashMap<&'static str, &'static str>; 6] {
 /// Columns: Polish, Chinese (Simplified), Japanese, German, Spanish, Ukrainian.
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, [&str; 6])] = &[
+    ("Skip DeepSeek for short dictations", ["Skip DeepSeek for short dictations", "短听写跳过 DeepSeek", "Skip DeepSeek for short dictations", "Skip DeepSeek for short dictations", "Skip DeepSeek for short dictations", "Skip DeepSeek for short dictations"]),
+    ("Skip DeepSeek rewriting for 20 characters or fewer", ["Skip DeepSeek rewriting for 20 characters or fewer", "不超过 20 个有效字符时跳过 DeepSeek 润色", "Skip DeepSeek rewriting for 20 characters or fewer", "Skip DeepSeek rewriting for 20 characters or fewer", "Skip DeepSeek rewriting for 20 characters or fewer", "Skip DeepSeek rewriting for 20 characters or fewer"]),
     ("Selected: {}", ["Selected: {}", "已选择：{}", "Selected: {}", "Selected: {}", "Selected: {}", "Selected: {}"]),
     ("Connected: {} models", ["Connected: {} models", "已连接：{} 个模型", "Connected: {} models", "Connected: {} models", "Connected: {} models", "Connected: {} models"]),
     ("Compatible text model", ["Compatible text model", "兼容文本模型", "Compatible text model", "Compatible text model", "Compatible text model", "Compatible text model"]),

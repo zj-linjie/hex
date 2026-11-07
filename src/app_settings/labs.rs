@@ -9,6 +9,7 @@ pub struct LabsSettings {
     /// The voice assistant's opt-in switch (`Feature::VoiceAssistant`).
     pub voice_assistant: bool,
     pub compatible_rewrite: bool,
+    pub skip_short_deepseek: bool,
     /// Live text beside the HUD while dictating.
     pub live_text: bool,
     pub live_chapters: bool,
@@ -106,6 +107,7 @@ impl Default for LabsSettings {
         Self {
             voice_assistant: false,
             compatible_rewrite: false,
+            skip_short_deepseek: false,
             live_text: false,
             live_chapters: false,
             playground: false,

@@ -62,6 +62,7 @@ impl Feature {
             | Self::SettingsSearch
             | Self::Playground => Group::Dictation,
             Self::CompatibleRewrite
+            | Self::SkipShortDeepseek
             | Self::SmartSpacing
             | Self::SpokenFormatting
             | Self::SpokenSymbols

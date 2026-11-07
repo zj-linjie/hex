@@ -440,6 +440,11 @@ const KEYS: &[Key] = &[
         "Labs: a meeting recording Hex started on its own stops 30 s after its call app leaves the microphone and goes quiet, unless you keep recording (macOS)",
     ),
     key(
+        "labs.skip_short_deepseek",
+        Kind::Bool,
+        "Labs: skip DeepSeek rewriting for dictations of at most 20 meaningful characters",
+    ),
+    key(
         "labs.compatible_rewrite",
         Kind::Bool,
         "Labs: direct compatible text model rewriting",
