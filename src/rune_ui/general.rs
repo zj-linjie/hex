@@ -74,6 +74,25 @@ pub(super) fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>, query: &str) -> Opt
                 ),
             );
         }
+        // Labs › Voice assistant (macOS): its hold shortcut beside
+        // dictation's, while the feature is on. The Voice Assistant pane
+        // lists the same row.
+        #[cfg(target_os = "macos")]
+        if crate::labs::Feature::VoiceAssistant.on(&ui.settings) {
+            rows.extend_described(
+                tr("Hold to talk"),
+                Some(tr("Talk to your Xiaozhi assistant")),
+                shortcut_rows(
+                    ui,
+                    p,
+                    "assistant-shortcut",
+                    &KEYBOARD,
+                    tr("Hold to talk"),
+                    ShortcutTarget::Assistant,
+                    Some(tr("Talk to your Xiaozhi assistant")),
+                ),
+            );
+        }
         // Annotate's shortcut beside dictation's on Linux, where the desktop
         // lists both and a lone F9 is otherwise easy to miss (#723).
         #[cfg(all(target_os = "linux", hex_capture))]

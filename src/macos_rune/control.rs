@@ -12,15 +12,18 @@ use std::time::{Duration, Instant};
 
 use crate::app_settings::AppSettings;
 use crate::control::{
-    self, CaptureReport, CaptureSnapshot, CaptureState, ControlCall, ControlCommand, ControlError,
-    ControlReply, ControlResponse, FeatureReport, ListenerReport, MeetingReport, ModelReport, Pane,
-    PermissionReport, StatusReport, WindowReport, settings,
+    self, AssistantAction, CaptureReport, CaptureSnapshot, CaptureState, ControlCall,
+    ControlCommand, ControlError, ControlReply, ControlResponse, FeatureReport, ListenerReport,
+    MeetingReport, ModelReport, Pane, PermissionReport, StatusReport, WindowReport, settings,
 };
 use crate::desktop::host::{DesktopAction, DesktopUpdateStatus};
 use crate::desktop::onboarding::PermissionState;
 use crate::meeting::MeetingRequest;
 use crate::meeting::watcher::{ControllerEvent, MeetingMenuState};
-use crate::recognition::RecognitionControl;
+use crate::recognition::{
+    AssistantCaptureAction, AssistantCaptureStatus, RecognitionControl, assistant_capture,
+    assistant_capture_status,
+};
 use crate::rune_ui::story_link::{self, StoryLink};
 use crate::rune_ui::{Destination, Ui};
 
@@ -103,6 +106,35 @@ impl Pump {
                         super::quit();
                     }
                 });
+                None
+            }
+            ControlCommand::Assistant { action } => {
+                let status = assistant_capture_status();
+                match (action, status) {
+                    (
+                        AssistantAction::Start,
+                        AssistantCaptureStatus::Recording
+                        | AssistantCaptureStatus::Busy
+                        | AssistantCaptureStatus::Unavailable,
+                    ) => {
+                        let _ = reply.send(
+                            ControlReply::error(
+                                "busy",
+                                "voice assistant is recording or unavailable",
+                            )
+                            .into(),
+                        );
+                    }
+                    (action, _) => {
+                        assistant_capture(AssistantCaptureAction::from(action));
+                        let message = match action {
+                            AssistantAction::Start => "voice assistant turn started",
+                            AssistantAction::Stop => "voice assistant turn submitted",
+                            AssistantAction::Cancel => "voice assistant turn discarded",
+                        };
+                        let _ = reply.send(ControlReply::done(message).into());
+                    }
+                }
                 None
             }
             #[cfg(hex_capture)]

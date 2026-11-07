@@ -33,6 +33,12 @@ Agent or terminal                                  // control.cli; every OS
 │   └── dictation start|toggle --raw -> the dictation it starts pastes the
 │       transcript as heard (Dictate without processing); History keeps it as Raw;
 │       --raw with stop -> usage error, exit 2
+├── hex assistant start|stop|cancel
+│   ├── Labs › Voice assistant on -> drive the hold-to-talk turn the
+│   │   right-Option shortcut drives: start opens the turn, stop submits
+│   │   it, cancel discards it
+│   ├── start while a turn records -> busy, exit 1
+│   └── Feature off -> unavailable, exit 1
 ├── hex paste-last -> pastes the last dictation
 │   ├── Setup gates the listener -> not-ready
 │   └── Recording or shortcut gesture in progress -> busy (menu bar: nothing)

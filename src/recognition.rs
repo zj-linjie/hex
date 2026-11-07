@@ -848,9 +848,13 @@ pub fn listen(
         );
         if let Some(machine) = &mut assistant_hotkey {
             machine.set_strict_chords(true);
-            machine.set_double_tap_enabled(false);
-            machine.set_double_tap_only(false);
-            machine.set_toggle(false);
+            // The assistant dictates like the dictation shortcut: hold to
+            // talk, and double-tap lock (and Toggle mode) follow dictation's
+            // settings. Strict chords stay assistant-only: any unrelated key
+            // or modifier discards its hold at any time.
+            machine.set_double_tap_enabled(crate::app_settings::double_tap_lock());
+            machine.set_double_tap_only(crate::app_settings::double_tap_only());
+            machine.set_toggle(crate::app_settings::shortcut_toggle());
         }
         if assistant_started.is_some()
             && (assistant_unbound
