@@ -11,6 +11,10 @@ Labs > Voice Assistant [off by default]                  // assistant.opt-in
     ├── Import identity -> existing activated assistant state.json
     │   └── owner-only Application Support/hex/voice-assistant-identity.json
     ├── Hold to talk [Right Option; editable]            // assistant.capture
+    │   │   also in General's shortcut rows while the feature is on
+    │   ├── double-tap lock and Toggle mode follow dictation's shortcut
+    │   │   settings: locked hold records hands-free until the next press,
+    │   │   which finishes and submits (captures over 60 s discard)
     │   ├── microphone already owned -> report busy; never steal it
     │   ├── hold -> shared start cue + visible Dot scope from the native microphone
     │   │   └── sound theme/volume and HUD placement/Reduce Motion follow dictation
