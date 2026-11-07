@@ -11,8 +11,8 @@ mod human;
 use clap::{Args, Subcommand};
 
 use super::{
-    CONTROL_VERSION, CaptureAction, ControlCommand, ControlReply, ControlRequest, ControlResponse,
-    Pane,
+    CONTROL_VERSION, AssistantAction, CaptureAction, ControlCommand, ControlReply, ControlRequest,
+    ControlResponse, Pane,
 };
 
 pub const EXIT_REFUSED: u8 = 1;
@@ -76,6 +76,15 @@ pub enum ControlCli {
         /// processing.
         #[arg(long)]
         raw: bool,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Drive the voice assistant (Labs › Voice assistant) like the
+    /// right-Option shortcut: `start` opens the hold-to-talk turn, `stop`
+    /// submits it, `cancel` discards it.
+    Assistant {
+        #[arg(value_enum)]
+        action: AssistantAction,
         #[command(flatten)]
         output: Output,
     },
@@ -425,6 +434,9 @@ pub fn run(command: ControlCli) -> u8 {
                 return 2;
             }
             send(ControlCommand::Dictation { action, print, raw }, output)
+        }
+        ControlCli::Assistant { action, output } => {
+            send(ControlCommand::Assistant { action }, output)
         }
         ControlCli::PasteLast { output } => send(ControlCommand::PasteLast, output),
         ControlCli::Screenshot { pick, output } => {

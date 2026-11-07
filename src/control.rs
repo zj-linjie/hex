@@ -21,6 +21,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::dictation::vocabulary::{self, VocabularyEntry};
+use crate::recognition::AssistantCaptureAction;
 
 /// The wire version of [`ControlRequest`] and [`ControlResponse`]. A change
 /// that breaks either shape increments it.
@@ -41,6 +42,32 @@ pub enum CaptureAction {
     /// Discard the recording: nothing is transcribed, pasted, or saved.
     /// Dictations already transcribing finish.
     Cancel,
+}
+
+/// Drive the voice assistant (Labs › Voice assistant) the way the
+/// right-Option shortcut does: `start` opens the hold-to-talk turn, `stop`
+/// submits it, `cancel` discards it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssistantAction {
+    /// Open the hold-to-talk turn: the microphone opens and the assistant
+    /// listens, like pressing the right-Option shortcut.
+    Start,
+    /// Submit the turn: the audio recorded so far goes to the assistant and
+    /// the reply plays, like releasing the shortcut.
+    Stop,
+    /// Discard the turn: nothing is submitted or saved.
+    Cancel,
+}
+
+impl From<AssistantAction> for AssistantCaptureAction {
+    fn from(action: AssistantAction) -> Self {
+        match action {
+            AssistantAction::Start => Self::Start,
+            AssistantAction::Stop => Self::Finish,
+            AssistantAction::Cancel => Self::Cancel,
+        }
+    }
 }
 
 /// What `hex capture` does (the `capture` experiment).
@@ -96,6 +123,12 @@ pub enum ControlCommand {
         /// transcript as heard, skipping the Output pane's steps.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         raw: bool,
+    },
+    /// Drive the voice assistant (Labs › Voice assistant) the way the
+    /// right-Option shortcut would: `start` opens the hold-to-talk turn,
+    /// `stop` submits it, `cancel` discards it.
+    Assistant {
+        action: AssistantAction,
     },
     PasteLast,
     /// Labs › Screenshots (macOS): the display under the pointer, or with
@@ -1022,6 +1055,16 @@ mod tests {
                 raw: false,
             }
         );
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(
+                r#"{"version":4,"command":"assistant","action":"start"}"#
+            )
+            .unwrap()
+            .command,
+            ControlCommand::Assistant {
+                action: AssistantAction::Start,
+            }
+        );
     }
 
     /// `cancel` discards the recording, and takes neither flag.
@@ -1069,6 +1112,9 @@ mod tests {
                 action: CaptureAction::Start,
                 print: false,
                 raw: true,
+            },
+            ControlCommand::Assistant {
+                action: AssistantAction::Start,
             },
             ControlCommand::PasteLast,
             ControlCommand::Screenshot { pick: false },
