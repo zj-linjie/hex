@@ -328,6 +328,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
     }
     if cfg!(target_os = "macos") {
         rows.push(row(
+            Feature::SkipShortDeepseek,
+            None,
+            tr("Skip DeepSeek for short dictations"),
+            tr("Skip DeepSeek rewriting for 20 characters or fewer"),
+        ));
+        rows.push(row(
             Feature::CompatibleRewrite,
             None,
             tr("Compatible text model"),
@@ -737,6 +743,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::VoiceFilter => "lab-voice-filter",
         Feature::VoiceAssistant => "lab-voice-assistant",
         Feature::CompatibleRewrite => "lab-compatible-rewrite",
+        Feature::SkipShortDeepseek => "lab-skip-short-deepseek",
         Feature::Playground => "lab-playground",
         Feature::LiveText => "lab-live-text",
         Feature::LiveChapters => "lab-live-chapters",

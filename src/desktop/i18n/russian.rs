@@ -15,6 +15,8 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, &str)] = &[
+    ("Skip DeepSeek for short dictations", "Skip DeepSeek for short dictations"),
+    ("Skip DeepSeek rewriting for 20 characters or fewer", "Skip DeepSeek rewriting for 20 characters or fewer"),
     ("Selected: {}", "Selected: {}"),
     ("Connected: {} models", "Connected: {} models"),
     ("Compatible text model", "Compatible text model"),

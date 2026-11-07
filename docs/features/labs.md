@@ -1433,3 +1433,18 @@ Checks: `labs_is_one_flat_list_of_toggles_off_by_default`,
 [control/settings.rs](../../src/control/settings.rs). Passed on Linux on
 2026-10-30; the macOS build was not checked, and the Windows build was
 type-checked only.
+
+
+## Skip DeepSeek for short dictations (macOS)
+
+Labs › Output › Skip DeepSeek for short dictations is off by default. When on,
+the selected direct `api.deepseek.com` rewrite skips text of at most 20 Unicode
+characters after local corrections, excluding whitespace and Unicode
+punctuation; symbols such as emoji count. OpenCode and other compatible
+endpoints are unchanged. Local corrections and subsequent configured
+transformations still run; a user transformation can itself use the network.
+The non-text skip reason is logged. Numbers-only behavior remains unchanged.
+
+Check: `short_deepseek_skips_only_the_selected_direct_provider_and_keeps_transforms`
+exercises the boundary and processing decision; it does not prove live speech
+recognition, native UI, or that vocabulary hints guarantee a correction.

@@ -68,6 +68,7 @@ pub enum Feature {
     VoiceFilter,
     VoiceAssistant,
     CompatibleRewrite,
+    SkipShortDeepseek,
     Playground,
     LiveText,
     LiveChapters,
@@ -119,11 +120,12 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 53] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::VoiceAssistant,
         Self::CompatibleRewrite,
+        Self::SkipShortDeepseek,
         Self::Playground,
         Self::LiveText,
         Self::LiveChapters,
@@ -202,6 +204,7 @@ impl Feature {
             Self::Meetings
             | Self::VoiceAssistant
             | Self::CompatibleRewrite
+            | Self::SkipShortDeepseek
             | Self::LiveText
             | Self::LiveChapters
             | Self::VocabularyBiasing
@@ -307,6 +310,7 @@ impl Feature {
             | Self::SettingsSearch
             | Self::MeetingImport
             | Self::CompatibleRewrite => 20261106,
+            Self::SkipShortDeepseek => 20261108,
         }
     }
 
@@ -340,6 +344,7 @@ impl Feature {
         match self {
             Self::VoiceAssistant
             | Self::CompatibleRewrite
+            | Self::SkipShortDeepseek
             | Self::Meetings
             | Self::LiveChapters
             | Self::SubtitleExport
@@ -409,6 +414,7 @@ impl Feature {
             Self::VoiceFilter => "voice-filter",
             Self::VoiceAssistant => "voice-assistant",
             Self::CompatibleRewrite => "compatible-rewrite",
+            Self::SkipShortDeepseek => "skip-short-deepseek",
             Self::Playground => "playground",
             Self::LiveText => "live-text",
             Self::LiveChapters => "live-chapters",
@@ -467,6 +473,7 @@ impl Feature {
             Self::VoiceFilter => "experimental.hex_microphone",
             Self::VoiceAssistant => "labs.voice_assistant",
             Self::CompatibleRewrite => "labs.compatible_rewrite",
+            Self::SkipShortDeepseek => "labs.skip_short_deepseek",
             Self::Playground => "labs.playground",
             Self::LiveText => "labs.live_text",
             Self::LiveChapters => "labs.live_chapters",
@@ -525,6 +532,7 @@ impl Feature {
             Self::Meetings => "Record calls and keep transcripts (its own pane)",
             Self::VoiceAssistant => "Talk to your Xiaozhi assistant (macOS)",
             Self::CompatibleRewrite => "Rewrite dictation through a compatible text model",
+            Self::SkipShortDeepseek => "Skip DeepSeek rewriting for short dictations",
             Self::VoiceFilter => {
                 "Hex Microphone virtual input and real-time voice filters (its own pane)"
             }
@@ -667,6 +675,7 @@ impl Feature {
             Self::VoiceFilter => settings.experimental.hex_microphone,
             Self::VoiceAssistant => settings.labs.voice_assistant,
             Self::CompatibleRewrite => settings.labs.compatible_rewrite,
+            Self::SkipShortDeepseek => settings.labs.skip_short_deepseek,
             Self::Playground => settings.labs.playground,
             Self::LiveText => settings.labs.live_text,
             Self::LiveChapters => settings.labs.live_chapters,
@@ -731,6 +740,7 @@ impl Feature {
             &mut settings.share_dictation_shortcut,
             &mut labs.voice_assistant,
             &mut labs.compatible_rewrite,
+            &mut labs.skip_short_deepseek,
             &mut labs.playground,
             &mut labs.live_text,
             &mut labs.live_chapters,
@@ -789,6 +799,7 @@ impl Feature {
             Self::VoiceFilter => settings.experimental.hex_microphone = on,
             Self::VoiceAssistant => settings.labs.voice_assistant = on,
             Self::CompatibleRewrite => settings.labs.compatible_rewrite = on,
+            Self::SkipShortDeepseek => settings.labs.skip_short_deepseek = on,
             Self::Playground => settings.labs.playground = on,
             Self::LiveText => settings.labs.live_text = on,
             Self::LiveChapters => settings.labs.live_chapters = on,
@@ -894,6 +905,7 @@ const MINUTES_BITS: u32 = 11;
 const MINUTES_MASK: u64 = (1 << MINUTES_BITS) - 1;
 /// Bits 1..31 are full, so this switch sits above the minutes.
 const MEETING_IMPORT: u64 = 1 << (MINUTES_SHIFT + MINUTES_BITS as u64);
+const SKIP_SHORT_DEEPSEEK: u64 = 1 << (MINUTES_SHIFT + MINUTES_BITS as u64 + 1);
 
 /// This process's `labs` switches: unknown until settings load or one is
 /// first read.
@@ -1119,6 +1131,10 @@ pub fn meeting_import() -> bool {
     on(MEETING_IMPORT) && Feature::MeetingImport.on_this_os()
 }
 
+pub(crate) fn skip_short_deepseek() -> bool {
+    on(SKIP_SHORT_DEEPSEEK) && Feature::SkipShortDeepseek.on_this_os()
+}
+
 /// How long the speech model may sit unused before the engine unloads it,
 /// while Labs › Unload model when idle is on.
 pub fn unload_idle() -> Option<std::time::Duration> {
@@ -1144,6 +1160,11 @@ fn encode(settings: &LabsSettings) -> u64 {
 fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u64 {
     let minutes = u64::from(settings.unload_idle_minutes.clamp(1, 24 * 60)) << MINUTES_SHIFT;
     [
+        (
+            Feature::SkipShortDeepseek,
+            settings.skip_short_deepseek,
+            SKIP_SHORT_DEEPSEEK,
+        ),
         (Feature::LiveText, settings.live_text, LIVE_TEXT),
         (Feature::LiveChapters, settings.live_chapters, LIVE_CHAPTERS),
         (Feature::Playground, settings.playground, PLAYGROUND),

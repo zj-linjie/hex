@@ -220,3 +220,12 @@ trip in control.rs; `vocabulary_lists_terms_with_their_spellings` in
 `vocabulary-unused` (Whisper, no golden). Passed on macOS on
 2026-10-23; the unused-model note's checks have not been observed running. Not yet observed: the sheet edited in a running Hex, a CLI edit
 against a running Hex, or a rewrite with a live provider.
+
+
+A manually invoked `hex-hotfix` skill can propose terms from retained Hex
+dictation history or record a user-supplied correction in this shared list.
+It is separate from the dictation runtime. Qwen whole-clip transcription may
+receive terms as a bounded hint, whereas its live stream does not; aliases are
+not Qwen prompts. Neither path guarantees a particular spelling. Labs'
+[short-DeepSeek switch](labs.md#skip-deepseek-for-short-dictations-macos)
+can skip rewriting, leaving the local transcript and configured transformations.

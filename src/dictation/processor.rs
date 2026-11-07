@@ -334,6 +334,21 @@ impl Profiles {
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
     ) -> Processed {
+        self.process_with_short_deepseek(
+            transcript,
+            context,
+            cancelled,
+            crate::labs::skip_short_deepseek(),
+        )
+    }
+
+    fn process_with_short_deepseek(
+        &self,
+        transcript: &str,
+        context: &ContextSnapshot,
+        cancelled: &AtomicBool,
+        skip_short: bool,
+    ) -> Processed {
         let profile = self.select(context);
         // Labs › Spoken formatting starts here, ahead of every mode's
         // corrections, so it is off for raw dictation and meetings.
@@ -378,7 +393,19 @@ impl Profiles {
                 "dictation post-processing skipped: the rewrite is off for this mode"
             );
         }
-        if !profile.ai_enabled || numbers_only {
+        let short_deepseek = skip_short
+            && profile
+                .compatible
+                .as_ref()
+                .is_some_and(|config| is_deepseek(&config.base_url))
+            && short_transcript(&corrected);
+        if short_deepseek {
+            tracing::info!(
+                profile = profile.name,
+                "dictation post-processing skipped for a short DeepSeek transcript"
+            );
+        }
+        if !profile.ai_enabled || numbers_only || short_deepseek {
             return Processed {
                 text: corrected,
                 observation: None,
@@ -422,6 +449,25 @@ impl Profiles {
             transformations: profile.transformations.clone(),
         }
     }
+}
+
+// Only the official direct DeepSeek API is covered; a compatible gateway may
+// serve unrelated providers and must retain its existing behavior.
+fn is_deepseek(base: &str) -> bool {
+    url::Url::parse(base)
+        .is_ok_and(|url| url.scheme() == "https" && url.host_str() == Some("api.deepseek.com"))
+}
+
+fn short_transcript(text: &str) -> bool {
+    use std::sync::OnceLock;
+    static PUNCTUATION: OnceLock<regex::Regex> = OnceLock::new();
+    let punctuation =
+        PUNCTUATION.get_or_init(|| regex::Regex::new(r"\p{P}").expect("valid Unicode punctuation"));
+    text.chars()
+        .filter(|c| !c.is_whitespace() && !punctuation.is_match(c.encode_utf8(&mut [0; 4])))
+        .take(21)
+        .count()
+        <= 20
 }
 
 /// Whether a transcript says nothing but numbers: digits or English number
@@ -1198,6 +1244,79 @@ mod tests {
     use std::net::TcpListener;
 
     use url::Url;
+
+    #[test]
+    fn short_deepseek_skips_only_the_selected_direct_provider_and_keeps_transforms() {
+        assert!(short_transcript("，！  "));
+        assert!(short_transcript("你"));
+        assert!(short_transcript("中a1， ".repeat(6).as_str()));
+        assert!(short_transcript("你".repeat(20).as_str()));
+        assert!(!short_transcript("你".repeat(21).as_str()));
+        assert!(!short_transcript("🙂".repeat(21).as_str()));
+        assert!(!is_deepseek("https://api.deepseek.com.example/v1"));
+        let mut profile = Profile::new("Global", "Fix text")
+            .ai_enabled(true)
+            .transformations(vec!["after".into()]);
+        profile.compatible = Some(crate::app_settings::CompatibleRewriteSettings {
+            selected: true,
+            base_url: "https://api.deepseek.com/v1".into(),
+            model: "test".into(),
+            credential_path: "/missing".into(),
+        });
+        let profiles = Profiles::new(profile);
+        let run = |text, enabled| {
+            profiles.process_with_short_deepseek(
+                text,
+                &ContextSnapshot::default(),
+                &AtomicBool::new(false),
+                enabled,
+            )
+        };
+        let short = run("你好", true);
+        assert_eq!(short.text, "你好");
+        assert!(short.observation.is_none());
+        assert_eq!(short.transformations, ["after"]);
+        assert!(run("你好", false).observation.unwrap().fallback.is_some());
+        assert!(
+            run(&"你".repeat(21), true)
+                .observation
+                .unwrap()
+                .fallback
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn compatible_timeout_falls_back_and_keeps_transforms() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_secs(6));
+        });
+        let mut profile = Profile::new("Global", "Fix text")
+            .ai_enabled(true)
+            .deadline(Duration::from_secs(5))
+            .transformations(vec!["after".into()]);
+        profile.compatible = Some(crate::app_settings::CompatibleRewriteSettings {
+            selected: true,
+            base_url: format!("http://{address}/v1"),
+            model: "test".into(),
+            credential_path: String::new(),
+        });
+        let started = Instant::now();
+        let result = Profiles::new(profile).process_with_short_deepseek(
+            "你好",
+            &ContextSnapshot::default(),
+            &AtomicBool::new(false),
+            true,
+        );
+        assert_eq!(result.text, "你好");
+        assert_eq!(result.transformations, ["after"]);
+        assert!(result.observation.unwrap().fallback.is_some());
+        assert!(started.elapsed() < Duration::from_secs(6));
+        server.join().unwrap();
+    }
 
     #[test]
     fn unavailable_compatible_service_falls_back_to_corrected_text() {
