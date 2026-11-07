@@ -1,7 +1,7 @@
 use std::io::Cursor;
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -80,6 +80,8 @@ pub enum Tone {
     /// A dictation pasted at least [`DONE_MIN_AFTER_STOP`] after its stop
     /// sound, such as after a slow rewrite.
     DictationDone,
+    /// Toggle's cancel shortcut discarded a recording.
+    Cancel,
     /// The first-run tour reached its last step.
     OnboardingSuccess,
     /// A first-run onboarding cue (typing clacks, shortcut keycap, motion landings).
@@ -93,11 +95,9 @@ pub enum Tone {
     /// Its auto-send went, once Undo ran out.
     #[cfg(hex_capture)]
     CaptureSent,
-    /// A send was taken back, or a recording cancelled.
+    /// A send was taken back.
     #[cfg(hex_capture)]
     CaptureUndo,
-    #[cfg(hex_capture)]
-    CaptureFailed,
 }
 
 /// A request to the playback worker. The start tone of a shortcut press is
@@ -106,28 +106,33 @@ pub enum Tone {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Request {
     Play(Tone),
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    AssistantStop(u64),
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    AssistantStartStop(u64),
     Audition(SoundSet, Audition),
     StopAudition,
     ProvisionalStart,
     RetractStart,
     Prepare,
-}
-
-static CAPTURE_EPOCH: AtomicU64 = AtomicU64::new(0);
-
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn capture_started() -> u64 {
-    CAPTURE_EPOCH.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+    /// The assistant's release cue: the stop sound, or start then stop when
+    /// the warm start tone never sounded. The epoch fences a stale cue.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    AssistantStop(u64),
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    AssistantStartStop(u64),
 }
 
 static DICTATION_PLAYER: OnceLock<SyncSender<Request>> = OnceLock::new();
 static LOADER_STARTED: AtomicBool = AtomicBool::new(false);
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static VOLUME: AtomicU32 = AtomicU32::new(0.5_f32.to_bits());
+
+/// Bumped at each capture start, so a delayed assistant cue knows whether it
+/// still belongs to the current one.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+static CAPTURE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn capture_started() -> u64 {
+    CAPTURE_EPOCH.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+}
 
 pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::Relaxed);
@@ -261,121 +266,128 @@ pub fn preload() -> Result<()> {
     }
     let (sender, receiver) = mpsc::sync_channel::<Request>(32);
     let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let sounds = match Sounds::load() {
-            Ok(sounds) => sounds,
-            Err(error) => {
-                let _ = ready_sender.send(Err(error));
-                LOADER_STARTED.store(false, Ordering::Release);
-                return;
-            }
-        };
-        let mut output = FeedbackOutput::new();
-        // The device opens for the first tone, not at startup, so an idle app
-        // holds no output stream. Publish before any tone arrives.
-        publish_player(&DICTATION_PLAYER, sender, ready_sender, Ok(()));
-        let mut start_tone = ProvisionalStart::default();
-        let mut audition = Auditioning::default();
-        loop {
-            let timeout = start_tone.wait(Instant::now(), OBSERVATION_INTERVAL);
-            let request = match receiver.recv_timeout(timeout) {
-                Ok(request) => Some(request),
-                Err(mpsc::RecvTimeoutError::Timeout) => None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+    let spawned = thread::Builder::new()
+        .name("feedback".into())
+        .spawn(move || {
+            let sounds = match Sounds::load() {
+                Ok(sounds) => sounds,
+                Err(error) => {
+                    let _ = ready_sender.send(Err(error));
+                    LOADER_STARTED.store(false, Ordering::Release);
+                    return;
+                }
             };
-            let received_at = Instant::now();
-            let timed_out = request.is_none();
-            let enabled = sounds_enabled();
-            output.release_when_idle(enabled, received_at);
-            if !enabled {
-                start_tone.retract();
-                audition.stop();
-                continue;
-            }
-            let assistant_stop_epoch = match request {
-                Some(Request::AssistantStop(epoch) | Request::AssistantStartStop(epoch)) => {
-                    Some(epoch)
-                }
-                _ => None,
-            };
-            let tone = match request {
-                Some(Request::Play(tone)) => {
-                    if tone == Tone::DictationStart {
-                        start_tone.cancel_pending();
-                    }
-                    Some(tone)
-                }
-                Some(Request::AssistantStop(epoch)) => assistant_stop_tone(epoch),
-                Some(Request::AssistantStartStop(epoch)) => {
-                    assistant_stop_current(epoch).then_some(Tone::DictationStart)
-                }
-                Some(Request::ProvisionalStart) => {
-                    start_tone.request(received_at);
-                    // Opening during the chord grace keeps a cold device off
-                    // the path to the audible tone.
-                    output.prepare(received_at);
-                    None
-                }
-                Some(Request::RetractStart) => {
-                    start_tone.retract();
-                    None
-                }
-                Some(Request::Prepare) => {
-                    output.prepare(received_at);
-                    None
-                }
-                Some(Request::Audition(set, what)) => {
-                    audition.stop();
-                    let stopped = audition.begin();
-                    for (sound, at, cue) in sounds.audition(set, what) {
-                        let (sound, _) = Retractable::with_flag(sound.delay(at), stopped.clone());
-                        output.play(sound, (set, cue));
-                    }
-                    #[cfg(target_os = "macos")]
-                    if what == Audition::Cue(Cue::Error) && !set.has_own_error() {
-                        audition.system = spawn_system_sound("Basso");
-                    }
-                    None
-                }
-                Some(Request::StopAudition) => {
-                    audition.stop();
-                    None
-                }
-                None => None,
-            };
-            if let Some(tone) = tone {
-                let sound = if matches!(request, Some(Request::AssistantStartStop(_))) {
-                    Some(&sounds.set(sound_set()).start_stop)
-                } else {
-                    sounds.get(sound_set(), tone)
+            let mut output = FeedbackOutput::new();
+            // The device opens for the first tone, not at startup, so an idle app
+            // holds no output stream. Publish before any tone arrives.
+            publish_player(&DICTATION_PLAYER, sender, ready_sender, Ok(()));
+            let mut start_tone = ProvisionalStart::default();
+            let mut audition = Auditioning::default();
+            loop {
+                let timeout = start_tone.wait(Instant::now(), OBSERVATION_INTERVAL);
+                let request = match receiver.recv_timeout(timeout) {
+                    Ok(request) => Some(request),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 };
-                if let Some(sound) = sound {
-                    if let Some(epoch) = assistant_stop_epoch {
-                        output.play_if(
-                            EpochSource {
-                                inner: sound.clone(),
-                                epoch,
-                            },
-                            tone,
-                            || assistant_stop_current(epoch),
-                        );
+                let received_at = Instant::now();
+                let timed_out = request.is_none();
+                let enabled = sounds_enabled();
+                output.release_when_idle(enabled, received_at);
+                if !enabled {
+                    start_tone.retract();
+                    audition.stop();
+                    continue;
+                }
+                let assistant_stop_epoch = match request {
+                    Some(Request::AssistantStop(epoch) | Request::AssistantStartStop(epoch)) => {
+                        Some(epoch)
+                    }
+                    _ => None,
+                };
+                let tone = match request {
+                    Some(Request::Play(tone)) => {
+                        if tone == Tone::DictationStart {
+                            start_tone.cancel_pending();
+                        }
+                        Some(tone)
+                    }
+                    Some(Request::AssistantStop(epoch)) => assistant_stop_tone(epoch),
+                    Some(Request::AssistantStartStop(epoch)) => {
+                        assistant_stop_current(epoch).then_some(Tone::DictationStart)
+                    }
+                    Some(Request::ProvisionalStart) => {
+                        start_tone.request(received_at);
+                        // Opening during the chord grace keeps a cold device off
+                        // the path to the audible tone.
+                        output.prepare(received_at);
+                        None
+                    }
+                    Some(Request::RetractStart) => {
+                        start_tone.retract();
+                        None
+                    }
+                    Some(Request::Prepare) => {
+                        output.prepare(received_at);
+                        None
+                    }
+                    Some(Request::Audition(set, what)) => {
+                        audition.stop();
+                        let stopped = audition.begin();
+                        for (sound, at, cue) in sounds.audition(set, what) {
+                            let (sound, _) =
+                                Retractable::with_flag(sound.delay(at), stopped.clone());
+                            output.play(sound, (set, cue));
+                        }
+                        #[cfg(target_os = "macos")]
+                        if what == Audition::Cue(Cue::Error) && !set.has_own_error() {
+                            audition.system = spawn_system_sound("Basso");
+                        }
+                        None
+                    }
+                    Some(Request::StopAudition) => {
+                        audition.stop();
+                        None
+                    }
+                    None => None,
+                };
+                if let Some(tone) = tone {
+                    let sound = if matches!(request, Some(Request::AssistantStartStop(_))) {
+                        Some(sounds.set(sound_set()).start_stop.clone())
                     } else {
-                        output.play(sound.clone(), tone);
+                        sounds.get(sound_set(), tone).map(|sound| sound.clone())
+                    };
+                    if let Some(sound) = sound {
+                        if let Some(epoch) = assistant_stop_epoch {
+                            output.play_if(
+                                EpochSource {
+                                    inner: sound,
+                                    epoch,
+                                },
+                                tone,
+                                || assistant_stop_current(epoch),
+                            );
+                        } else {
+                            output.play(sound, tone);
+                        }
+                    }
+                } else if timed_out && start_tone.is_due(Instant::now()) {
+                    // Only an empty queue reaches here, so a retraction sent while
+                    // the device opened always wins over the tone.
+                    let start = sounds.set(sound_set()).start.clone();
+                    let (sound, retracted) = Retractable::new(start);
+                    if output.play(sound, Tone::DictationStart) {
+                        start_tone.sounding(retracted);
+                    } else {
+                        start_tone.retract();
                     }
                 }
-            } else if timed_out && start_tone.is_due(Instant::now()) {
-                // Only an empty queue reaches here, so a retraction sent while
-                // the device opened always wins over the tone.
-                let start = sounds.set(sound_set()).start.clone();
-                let (sound, retracted) = Retractable::new(start);
-                if output.play(sound, Tone::DictationStart) {
-                    start_tone.sounding(retracted);
-                } else {
-                    start_tone.retract();
-                }
             }
-        }
-    });
+        });
+    if let Err(error) = spawned {
+        LOADER_STARTED.store(false, Ordering::Release);
+        return Err(eyre!("could not start feedback audio: {error}"));
+    }
     let outcome = ready_receiver.recv_timeout(Duration::from_secs(2));
     admission_error(outcome)?;
     Ok(())
@@ -393,6 +405,69 @@ fn done_is_late(stopped: Option<Instant>, now: Instant) -> bool {
     stopped.is_none_or(|at| now.saturating_duration_since(at) >= DONE_MIN_AFTER_STOP)
 }
 
+/// Stop tones counted from release until their output is restored (Lower
+/// audio ramping back up, or a mute lifting) and so still unheard.
+static PENDING_STOPS: PendingStops = PendingStops::new();
+
+/// A done sound waits out any stop sound still waiting on its output: a
+/// dictation pasted before that stop gets the stop sound alone, never a done
+/// before it.
+fn done_plays(pending_stops: usize, stopped: Option<Instant>, now: Instant) -> bool {
+    pending_stops == 0 && done_is_late(stopped, now)
+}
+
+/// The stop tones counted until they play.
+struct PendingStops(AtomicUsize);
+
+// Windows restores a lowered output before the stop tone, so none ever waits.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
+impl PendingStops {
+    const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    /// Counts one stop tone now and returns the closure that plays it. The
+    /// guard ends the count whether the closure plays, finds sounds off, or is
+    /// dropped uncalled.
+    fn defer<'a>(
+        &'a self,
+        play_stop: impl FnOnce() + Send + Sync + 'a,
+    ) -> impl FnOnce() + Send + Sync + 'a {
+        let stop = self.begin();
+        move || {
+            play_stop();
+            drop(stop);
+        }
+    }
+
+    /// Counts one stop tone from now until its guard drops.
+    fn begin(&self) -> PendingStop<'_> {
+        self.0.fetch_add(1, Ordering::AcqRel);
+        PendingStop(self)
+    }
+
+    fn get(&self) -> usize {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// One counted stop tone, ended whether it plays or is dropped instead.
+struct PendingStop<'a>(&'a PendingStops);
+
+impl Drop for PendingStop<'_> {
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Counts a stop tone from now, before a lowered or muted output is restored,
+/// and returns what plays it once the output is back. Counting from now keeps
+/// a dictation pasted during the restore to the stop tone alone.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
+pub fn deferred_stop() -> impl FnOnce() + Send + Sync + 'static {
+    PENDING_STOPS.defer(|| play(Tone::DictationStop))
+}
+
 pub fn play(tone: Tone) {
     if !sounds_enabled() {
         return;
@@ -403,7 +478,7 @@ pub fn play(tone: Tone) {
         }
         Tone::DictationDone => {
             let stopped = *LAST_STOP.lock().unwrap_or_else(|e| e.into_inner());
-            if !done_is_late(stopped, Instant::now()) {
+            if !done_plays(PENDING_STOPS.get(), stopped, Instant::now()) {
                 return;
             }
         }
@@ -463,8 +538,8 @@ fn assistant_stop_to(
     }
 }
 
-/// A set of feedback sounds, chosen in Settings. Every set has its own start
-/// and stop, and all are level-matched, so a volume sounds the same in
+/// A set of feedback sounds, chosen in Settings. Every set has its own start,
+/// stop and cancel, and all are level-matched, so a volume sounds the same in
 /// each. `scripts/sounds/synth.py` makes their files.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -613,6 +688,18 @@ fn sound_set() -> SoundSet {
     SoundSet::decode(SOUND_SET.load(Ordering::Relaxed))
 }
 
+/// How long the current set's stop sound lasts, or zero while sounds are
+/// off. A dictation's release tail must not take it for speech.
+pub fn stop_tone_length() -> Duration {
+    if !sounds_enabled() {
+        return Duration::ZERO;
+    }
+    let stop = BUNDLED_SETS[sound_set() as usize].stop;
+    hound::WavReader::new(std::io::Cursor::new(stop)).map_or(Duration::from_millis(450), |reader| {
+        Duration::from_secs_f64(f64::from(reader.duration()) / f64::from(reader.spec().sample_rate))
+    })
+}
+
 /// Plays `what` of `set` at the current volume, so the sound picker can be
 /// heard. It ends the audition still sounding, if any.
 pub fn audition(set: SoundSet, what: Audition) {
@@ -661,6 +748,7 @@ impl Auditioning {
 struct BundledSet {
     start: &'static [u8],
     stop: &'static [u8],
+    cancel: &'static [u8],
     done: Option<&'static [u8]>,
     error: Option<&'static [u8]>,
     success: Option<&'static [u8]>,
@@ -686,6 +774,7 @@ macro_rules! synthesized_set {
         BundledSet {
             start: bundled_sound!($set, "start"),
             stop: bundled_sound!($set, "stop"),
+            cancel: bundled_sound!($set, "cancel"),
             done: Some(bundled_sound!($set, "done")),
             error: Some(bundled_sound!($set, "error")),
             success: Some(bundled_sound!($set, "success")),
@@ -699,6 +788,7 @@ const BUNDLED_SETS: [BundledSet; 7] = [
     BundledSet {
         start: bundled_sound!("classic", "start"),
         stop: bundled_sound!("classic", "stop"),
+        cancel: bundled_sound!("classic", "cancel"),
         done: None,
         // macOS plays Basso; elsewhere Classic borrows Signature's error.
         error: if cfg!(target_os = "macos") {
@@ -716,6 +806,7 @@ const BUNDLED_SETS: [BundledSet; 7] = [
     BundledSet {
         start: bundled_sound!("thock", "start"),
         stop: bundled_sound!("thock", "stop"),
+        cancel: bundled_sound!("thock", "cancel"),
         done: None,
         error: Some(bundled_sound!("thock", "error")),
         success: Some(bundled_sound!("thock", "success")),
@@ -726,7 +817,10 @@ const BUNDLED_SETS: [BundledSet; 7] = [
 struct SetSounds {
     start: SamplesBuffer,
     stop: SamplesBuffer,
+    /// The start cue chained before the stop cue, for an assistant release
+    /// that owes the start tone it never played.
     start_stop: SamplesBuffer,
+    cancel: SamplesBuffer,
     done: Option<SamplesBuffer>,
     /// Played for failures; `None` plays macOS Basso.
     error: Option<SamplesBuffer>,
@@ -743,6 +837,7 @@ impl SetSounds {
             start,
             stop,
             start_stop,
+            cancel: decode_wav(bundled.cancel)?,
             done: optional(bundled.done)?,
             error: optional(bundled.error)?,
             success: optional(bundled.success)?,
@@ -750,6 +845,7 @@ impl SetSounds {
     }
 }
 
+/// The start cue chained before the stop cue, at the start sound's format.
 fn ordered_cues(start: SamplesBuffer, stop: SamplesBuffer) -> Result<SamplesBuffer> {
     let channels = start.channels();
     let rate = start.sample_rate();
@@ -857,7 +953,7 @@ struct Sounds {
     sets: Vec<SetSounds>,
     onboarding: OnboardingSounds,
     #[cfg(hex_capture)]
-    capture: [SamplesBuffer; 5],
+    capture: CaptureSounds,
 }
 
 impl Sounds {
@@ -869,7 +965,7 @@ impl Sounds {
                 .collect::<Result<_>>()?,
             onboarding: OnboardingSounds::load()?,
             #[cfg(hex_capture)]
-            capture: capture_sounds()?,
+            capture: CaptureSounds::load()?,
         })
     }
 
@@ -901,6 +997,7 @@ impl Sounds {
         Some(match tone {
             Tone::DictationStart => &sounds.start,
             Tone::DictationStop => &sounds.stop,
+            Tone::Cancel => &sounds.cancel,
             Tone::DictationDone => return sounds.done.as_ref(),
             Tone::OnboardingSuccess => {
                 return sounds.success.as_ref().or(Some(&sounds.stop));
@@ -908,38 +1005,42 @@ impl Sounds {
             Tone::Onboarding(cue) => return self.onboarding.get(cue),
             Tone::Error => return sounds.error.as_ref(),
             #[cfg(hex_capture)]
-            Tone::CaptureStart => &self.capture[0],
+            Tone::CaptureStart => &sounds.start,
             #[cfg(hex_capture)]
-            Tone::CaptureStop => &self.capture[1],
+            Tone::CaptureStop => &sounds.stop,
             #[cfg(hex_capture)]
-            Tone::CaptureSent => &self.capture[2],
+            Tone::CaptureSent => sounds.done.as_ref().unwrap_or(&self.capture.sent),
             #[cfg(hex_capture)]
-            Tone::CaptureUndo => &self.capture[3],
-            #[cfg(hex_capture)]
-            Tone::CaptureFailed => &self.capture[4],
+            Tone::CaptureUndo => &self.capture.undo,
         })
     }
 }
 
-/// The capture tones, in [`Tone`]'s order: start, stop, sent, undo, failed.
+/// The capture tones no set has: a send for sets without a done sound,
+/// so a send is never silent, and a taken-back send.
 #[cfg(hex_capture)]
-fn capture_sounds() -> Result<[SamplesBuffer; 5]> {
-    macro_rules! sound {
-        ($name:literal) => {
-            decode(include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/resources/audio/",
-                $name
-            )))?
-        };
+struct CaptureSounds {
+    sent: SamplesBuffer,
+    undo: SamplesBuffer,
+}
+
+#[cfg(hex_capture)]
+impl CaptureSounds {
+    fn load() -> Result<Self> {
+        macro_rules! sound {
+            ($name:literal) => {
+                decode(include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/resources/audio/",
+                    $name
+                )))?
+            };
+        }
+        Ok(Self {
+            sent: sound!("captureSent.mp3"),
+            undo: sound!("captureUndo.mp3"),
+        })
     }
-    Ok([
-        sound!("captureStart.mp3"),
-        sound!("captureStop.mp3"),
-        sound!("captureSent.mp3"),
-        sound!("captureUndo.mp3"),
-        sound!("captureFailed.mp3"),
-    ])
 }
 
 /// Plays the start tone for a shortcut press that may still become a chord or
@@ -1094,6 +1195,7 @@ struct EpochSource<S> {
 
 impl<S: Source> Iterator for EpochSource<S> {
     type Item = rodio::Sample;
+
     fn next(&mut self) -> Option<Self::Item> {
         if assistant_stop_current(self.epoch) {
             self.inner.next()
@@ -1107,12 +1209,15 @@ impl<S: Source> Source for EpochSource<S> {
     fn current_span_len(&self) -> Option<usize> {
         self.inner.current_span_len()
     }
+
     fn channels(&self) -> rodio::ChannelCount {
         self.inner.channels()
     }
+
     fn sample_rate(&self) -> rodio::SampleRate {
         self.inner.sample_rate()
     }
+
     fn total_duration(&self) -> Option<Duration> {
         self.inner.total_duration()
     }
@@ -1159,6 +1264,9 @@ impl FeedbackOutput<MixerDeviceSink> {
         self.play_if(sound, tone, || true)
     }
 
+    /// Plays a sound that may have gone stale while the output opened, gating
+    /// it on `still_current` after the open. Returns whether it reached the
+    /// mixer.
     fn play_if(
         &mut self,
         sound: impl Source + Send + 'static,
@@ -1363,6 +1471,7 @@ mod tests {
         let mut sounds = vec![
             ("start", bundled.start, budget(130, 300)),
             ("stop", bundled.stop, budget(250, 450)),
+            ("cancel", bundled.cancel, budget(250, 2_100)),
         ];
         let optional = [
             ("done", bundled.done, budget(350, 0)),
@@ -1386,87 +1495,6 @@ mod tests {
             .position(|sample| sample.abs() > 0.01)
             .unwrap_or(samples.len());
         Duration::from_secs_f64((first / channels) as f64 / f64::from(rate))
-    }
-
-    #[test]
-    fn assistant_release_cues_are_sequential_and_fenced() {
-        let make = |samples: Vec<f32>| {
-            SamplesBuffer::new(
-                std::num::NonZero::new(1).unwrap(),
-                std::num::NonZero::new(48_000).unwrap(),
-                samples,
-            )
-        };
-        let combined = ordered_cues(make(vec![0.1, 0.2]), make(vec![0.3, 0.4])).unwrap();
-        assert_eq!(
-            combined.clone().collect::<Vec<_>>(),
-            vec![0.1, 0.2, 0.3, 0.4]
-        );
-        let epoch = capture_started();
-        let mut source = EpochSource {
-            inner: combined,
-            epoch,
-        };
-        assert_eq!(source.next(), Some(0.1));
-        assert_eq!(source.next(), Some(0.2));
-        capture_started();
-        assert_eq!(source.next(), None);
-    }
-
-    #[test]
-    fn assistant_stop_is_fenced_during_output_open_and_while_playing() {
-        let epoch = capture_started();
-        let mut output = FeedbackOutput::<()>::new();
-        output
-            .open_for_tone(Instant::now(), 0, || {
-                capture_started();
-                Ok(())
-            })
-            .unwrap();
-        assert!(!cue_allowed_after_open(true, || assistant_stop_current(
-            epoch
-        )));
-        let epoch = capture_started();
-        let mut sound = EpochSource {
-            inner: SamplesBuffer::new(
-                std::num::NonZero::new(1).unwrap(),
-                std::num::NonZero::new(48_000).unwrap(),
-                vec![0.5; 2],
-            ),
-            epoch,
-        };
-        assert_eq!(sound.next(), Some(0.5));
-        capture_started();
-        assert_eq!(sound.next(), None);
-    }
-
-    #[test]
-    fn queued_assistant_stop_is_rechecked_after_next_capture() {
-        let epoch = capture_started();
-        assert_eq!(assistant_stop_tone(epoch), Some(Tone::DictationStop));
-        capture_started();
-        assert_eq!(assistant_stop_tone(epoch), None);
-    }
-
-    #[test]
-    fn assistant_stop_uses_shared_player_without_changing_dictation_completion_clock() {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(2);
-        let before = *LAST_STOP.lock().unwrap_or_else(|e| e.into_inner());
-        assistant_stop_to(Some(&sender), false, 42, false);
-        assert!(receiver.try_recv().is_err());
-        assistant_stop_to(Some(&sender), true, 42, false);
-        assert!(matches!(
-            receiver.try_recv(),
-            Ok(Request::AssistantStop(42))
-        ));
-        assert!(receiver.try_recv().is_err());
-        assistant_stop_to(Some(&sender), true, 42, true);
-        assert!(matches!(
-            receiver.try_recv(),
-            Ok(Request::AssistantStartStop(42))
-        ));
-        assert!(receiver.try_recv().is_err());
-        assert_eq!(*LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()), before);
     }
 
     /// Every start sounds at once. The classic stop keeps its original soft
@@ -1996,6 +2024,30 @@ mod tests {
         assert!(done_is_late(None, stop));
     }
 
+    /// A dictation pasted while its stop tone still waits on the output gets
+    /// the stop tone alone, so done never sounds before stop.
+    #[test]
+    fn done_never_plays_before_a_delayed_stop_tone() {
+        let stop = Instant::now();
+        assert!(done_plays(0, None, stop));
+        assert!(done_plays(0, Some(stop), stop + DONE_MIN_AFTER_STOP));
+        assert!(!done_plays(1, None, stop));
+        assert!(!done_plays(1, Some(stop), stop + DONE_MIN_AFTER_STOP));
+        assert!(!done_plays(2, None, stop));
+
+        // The count ends whether the deferred stop plays or is dropped uncalled.
+        let pending = PendingStops::new();
+        let played = AtomicBool::new(false);
+        pending.defer(|| played.store(true, Ordering::Release))();
+        assert!(played.load(Ordering::Acquire));
+        assert_eq!(pending.get(), 0);
+
+        let uncalled = pending.defer(|| panic!("must not play"));
+        assert_eq!(pending.get(), 1);
+        drop(uncalled);
+        assert_eq!(pending.get(), 0);
+    }
+
     /// A dictation audition plays start, stop and done at their moments,
     /// each finished before the next, and every cue plays alone at once.
     #[test]
@@ -2103,5 +2155,86 @@ mod tests {
                 .to_string(),
             "could not open the audio output"
         );
+    }
+
+    #[test]
+    fn assistant_release_cues_are_sequential_and_fenced() {
+        let make = |samples: Vec<f32>| {
+            SamplesBuffer::new(
+                std::num::NonZero::new(1).unwrap(),
+                std::num::NonZero::new(48_000).unwrap(),
+                samples,
+            )
+        };
+        let combined = ordered_cues(make(vec![0.1, 0.2]), make(vec![0.3, 0.4])).unwrap();
+        assert_eq!(
+            combined.clone().collect::<Vec<_>>(),
+            vec![0.1, 0.2, 0.3, 0.4]
+        );
+        let epoch = capture_started();
+        let mut source = EpochSource {
+            inner: combined,
+            epoch,
+        };
+        assert_eq!(source.next(), Some(0.1));
+        assert_eq!(source.next(), Some(0.2));
+        capture_started();
+        assert_eq!(source.next(), None);
+    }
+
+    #[test]
+    fn assistant_stop_is_fenced_during_output_open_and_while_playing() {
+        let epoch = capture_started();
+        let mut output = FeedbackOutput::<()>::new();
+        output
+            .open_for_tone(Instant::now(), 0, || {
+                capture_started();
+                Ok(())
+            })
+            .unwrap();
+        assert!(!cue_allowed_after_open(true, || assistant_stop_current(
+            epoch
+        )));
+        let epoch = capture_started();
+        let mut sound = EpochSource {
+            inner: SamplesBuffer::new(
+                std::num::NonZero::new(1).unwrap(),
+                std::num::NonZero::new(48_000).unwrap(),
+                vec![0.5; 2],
+            ),
+            epoch,
+        };
+        assert_eq!(sound.next(), Some(0.5));
+        capture_started();
+        assert_eq!(sound.next(), None);
+    }
+
+    #[test]
+    fn queued_assistant_stop_is_rechecked_after_next_capture() {
+        let epoch = capture_started();
+        assert_eq!(assistant_stop_tone(epoch), Some(Tone::DictationStop));
+        capture_started();
+        assert_eq!(assistant_stop_tone(epoch), None);
+    }
+
+    #[test]
+    fn assistant_stop_uses_shared_player_without_changing_dictation_completion_clock() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(2);
+        let before = *LAST_STOP.lock().unwrap_or_else(|e| e.into_inner());
+        assistant_stop_to(Some(&sender), false, 42, false);
+        assert!(receiver.try_recv().is_err());
+        assistant_stop_to(Some(&sender), true, 42, false);
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Request::AssistantStop(42))
+        ));
+        assert!(receiver.try_recv().is_err());
+        assistant_stop_to(Some(&sender), true, 42, true);
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Request::AssistantStartStop(42))
+        ));
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(*LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()), before);
     }
 }

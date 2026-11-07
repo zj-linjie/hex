@@ -25,6 +25,11 @@ const LINUX_WINDOWS: &str = "Linux & Windows";
 const PATHS: &[(&str, &str)] = &[
     ("mac-settings", "Window/General/Settings"),
     ("mac-settings-sides", "Window/General/Left Option shortcut"),
+    ("toggle-cancel", "Window/General/Toggle cancel shortcut"),
+    (
+        "portal-toggle-cancel",
+        "Window/General/Toggle cancel on Wayland",
+    ),
     ("mac-settings-advanced", "Window/General/Advanced"),
     ("mac-settings-mic-level", "Window/General/Microphone level"),
     (
@@ -64,6 +69,10 @@ const PATHS: &[(&str, &str)] = &[
     (
         "vocabulary-unused",
         "Window/General/Vocabulary · not used by the model",
+    ),
+    (
+        "vocabulary-budget",
+        "Window/General/Vocabulary · more terms than the model reads",
     ),
     ("shortcut-row", "Window/General/Shortcut/Left Option"),
     ("shortcut-row-right", "Window/General/Shortcut/Right Option"),
@@ -162,6 +171,16 @@ const PATHS: &[(&str, &str)] = &[
     ("meetings-empty", "Window/Meetings/Empty"),
     ("meetings-off", "Window/Meetings/Off"),
     ("meetings-settings", "Window/Meetings/Settings"),
+    ("meetings-summaries", "Window/Meetings/Summaries"),
+    (
+        "meetings-summaries-unavailable",
+        "Window/Meetings/Summaries without Apple Intelligence",
+    ),
+    ("meetings-summary-model", "Window/Meetings/Summary model"),
+    (
+        "meetings-summary-model-not-running",
+        "Window/Meetings/Summary model without OpenCode",
+    ),
     ("meetings-allow", "Window/Meetings/Allow system audio"),
     ("meetings-calendar", "Window/Meetings/Calendar"),
     (
@@ -169,6 +188,8 @@ const PATHS: &[(&str, &str)] = &[
         "Window/Meetings/Calendar denied",
     ),
     ("history", "Window/History/History"),
+    ("history-menu", "Window/History/Retention menu"),
+    ("history-clear", "Window/History/Clear all asks first"),
     ("history-empty", "Window/History/Empty"),
     #[cfg(hex_capture)]
     ("mac-scrawl", "Window/Annotate/On"),
@@ -200,6 +221,11 @@ const PATHS: &[(&str, &str)] = &[
     ("mac-hud-lab", "Window/HUD Lab/HUD Lab"),
     ("mac-labs", "Window/General/Labs"),
     ("mac-labs-link", "Window/General/Labs link"),
+    ("mac-labs-on", "Window/General/Labs turned on"),
+    ("mac-labs-screenshots", "Window/General/Labs screenshots"),
+    ("mac-labs-category", "Window/General/Labs category"),
+    ("mac-labs-search", "Window/General/Labs search"),
+    ("mac-labs-settings", "Window/General/Labs settings"),
     ("mac-production", "Window/General/Production build"),
     ("mac-activity", "Window/Activity/Activity"),
     ("mac-onboarding", "Window/Onboarding/Setting up Hex"),
@@ -229,6 +255,8 @@ const PATHS: &[(&str, &str)] = &[
     ("commands", "Linux & Windows/Settings · hex commands"),
     ("portal-mouse", "Linux & Windows/Settings · mouse button"),
     ("windows-settings", "Linux & Windows/Settings · Windows"),
+    ("windows-labs", "Linux & Windows/Labs · Windows"),
+    ("linux-labs", "Linux & Windows/Labs · Linux"),
     ("disabled", "Linux & Windows/Disabled"),
     ("capturing", "Linux & Windows/Recording a shortcut"),
     ("menus", "Linux & Windows/Microphone menu"),
@@ -242,6 +270,10 @@ const PATHS: &[(&str, &str)] = &[
     (
         "onboarding-download-failed",
         "Linux & Windows/Onboarding · download failed",
+    ),
+    (
+        "onboarding-no-model",
+        "Linux & Windows/Onboarding · continued without a model",
     ),
     (
         "onboarding-model-found",

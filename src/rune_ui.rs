@@ -36,6 +36,7 @@ mod live_notes;
 pub(crate) mod live_text;
 pub(crate) mod meeting_capsules;
 mod meetings;
+pub(crate) use self::meetings::meeting_import_failed;
 mod meetings_host;
 mod model_details;
 mod model_import;
@@ -53,6 +54,8 @@ mod practice;
 mod scenes;
 #[cfg(hex_capture)]
 mod scrawl;
+#[cfg(hex_capture)]
+pub(crate) mod screenshot_thumbnail;
 mod settings;
 mod shortcut_mode;
 mod sidebar;
@@ -83,7 +86,7 @@ use host::{Backend, Request, ShortcutTarget};
 use onboarding_kit::live::Page;
 use scenes::{SCENES, Scene, fixture, mac_fixture, portal_fixture};
 use settings::Capture;
-use sidebar::{BuildKind, Pane, sidebar, title_bar};
+use sidebar::{BuildKind, Pane, pane_header, sidebar};
 
 /// How long typing pauses before a text field's edit is saved.
 const DRAFT_DELAY: Duration = Duration::from_millis(250);
@@ -104,7 +107,9 @@ pub(crate) fn run_app(
 ) {
     use crate::linux::service::{Activation, Control};
     rune::set_app_id(crate::linux::portal::APP_ID);
-    let mut app = self::app(Some(host.clone())).args(Vec::new()).windowless();
+    let mut app = self::app(Some(host.clone()))
+        .args(window_args())
+        .windowless();
     // Tiling window managers float a window that maps at a fixed size.
     // Desktops that float every window need no such map, and KWin on X11
     // keeps a fixed-size window from fitting a small screen, its title bar
@@ -179,9 +184,18 @@ pub(crate) fn app(connect: host::Connect) -> rune::App<Ui> {
     app
 }
 
+/// Rune's flags for the window on Linux and Windows: scroll bars show
+/// whenever there's more to scroll, as those platforms do, so a pointer
+/// without a wheel can reach them (#1209). macOS follows its own "Show scroll
+/// bars" setting.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) fn window_args() -> Vec<String> {
+    vec!["--scroll-bars".into(), "always".into()]
+}
+
 /// Beside a setting an organization locked (`crate::policy`).
 fn managed_note() -> &'static str {
-    tr(crate::policy::MANAGED_NOTE)
+    tr("Managed by your organization")
 }
 
 /// A `hex://` link the system opened with Hex: a story link opens the window
@@ -248,6 +262,8 @@ pub(crate) struct WindowCompositor {
     onboarding: Option<onboarding_kit::gpu_stage::OnboardingGpu>,
     game: Option<onboarding_kit::game_fx::GameFx>,
     sounds: sound_sets::Preview,
+    /// The device whose backend `process.log` names.
+    logged: Option<rune::compose::DeviceKey>,
 }
 
 impl rune::compose::Compositor<Ui> for WindowCompositor {
@@ -257,6 +273,10 @@ impl rune::compose::Compositor<Ui> for WindowCompositor {
     }
 
     fn render(&mut self, f: &mut rune::compose::Frame<'_, Ui>) {
+        if self.logged != Some(f.device_key()) {
+            self.logged = Some(f.device_key());
+            tracing::info!(gpu = %rune::describe_gpu(f.device), "window draws");
+        }
         if f.rt
             .marks
             .iter()
@@ -453,14 +473,21 @@ pub(crate) fn shortcut_rule(
         HotkeySlot::Assistant => ShortcutTarget::Assistant,
         HotkeySlot::PasteLast => ShortcutTarget::PasteLast,
         HotkeySlot::RawDictation => ShortcutTarget::RawDictation,
+        HotkeySlot::Cancel => ShortcutTarget::Cancel,
         #[cfg(hex_capture)]
         HotkeySlot::Capture => ShortcutTarget::Capture,
+        #[cfg(all(hex_capture, target_os = "macos"))]
+        HotkeySlot::CaptureReplay => ShortcutTarget::CaptureReplay,
+        #[cfg(all(hex_capture, not(target_os = "macos")))]
+        HotkeySlot::CaptureReplay => ShortcutTarget::Capture,
         #[cfg(target_os = "macos")]
         HotkeySlot::SecondDictation => ShortcutTarget::SecondDictation,
-        // Labs › Second dictation shortcut is macOS's; elsewhere a saved one
-        // meets the dictation shortcut's rules.
+        #[cfg(target_os = "macos")]
+        HotkeySlot::Screenshot => ShortcutTarget::Screenshot,
+        // Labs › Second dictation shortcut and Screenshots are macOS's;
+        // elsewhere a saved one meets the dictation shortcut's rules.
         #[cfg(not(target_os = "macos"))]
-        HotkeySlot::SecondDictation => ShortcutTarget::Dictation,
+        HotkeySlot::SecondDictation | HotkeySlot::Screenshot => ShortcutTarget::Dictation,
     };
     host::validate_hotkey(target, binding)
 }
@@ -509,6 +536,12 @@ pub(crate) fn meeting_corner_moved(
 #[cfg(target_os = "macos")]
 pub(crate) fn show_error(ui: &mut Ui, error: String) {
     ui.error = Some(error);
+}
+
+/// The menu bar asked for an update check: the footer says how it went.
+#[cfg(target_os = "macos")]
+pub(crate) fn update_check_asked(ui: &mut Ui) {
+    ui.update_asked = true;
 }
 
 /// A meeting recording could not start or finish; the Meetings pane says why.
@@ -592,6 +625,8 @@ struct ServiceView {
     transcription: DesktopTranscriptionSnapshot,
     update_status: DesktopUpdateStatus,
     update_notes: Option<crate::desktop::host::UpdateNotes>,
+    /// Why this Hex can't update itself, beside Download update (Windows).
+    update_blocked: Option<&'static str>,
     /// The service is recording or saving a shortcut.
     editing: bool,
 }
@@ -606,6 +641,10 @@ enum Menu {
     InputSourceLanguage(usize),
     /// How long History keeps dictations.
     HistoryRetention,
+    /// The installed models History's Transcribe again offers.
+    HistoryAgain,
+    /// The language of Transcribe again's chosen model, for that run.
+    HistoryAgainLanguage,
     /// The OpenCode thinking variant.
     Variant,
     /// The selected meeting's overflow menu.
@@ -654,12 +693,14 @@ pub(crate) struct Ui {
     microphones_listing:
         Option<std::sync::mpsc::Receiver<Result<crate::audio::InputDevices, String>>>,
     mic_level: general::MicLevel,
+    /// General's search, while Labs › Settings search is on.
+    general_search: TextEdit,
     /// The panes whose Advanced fold is open.
     advanced: Vec<Pane>,
     /// The Labs page shows in place of a pane.
     labs_open: bool,
-    /// The Labs row a link just opened, pulsing until it is cleared.
-    lab_flash: Option<(crate::labs::Feature, Instant)>,
+    /// The Labs store's search, tab, and chip.
+    lab_store: labs::Store,
     /// A scene previewing the badge of a build kind this binary is not.
     build_preview: Option<BuildKind>,
     capture: Capture,
@@ -695,6 +736,9 @@ pub(crate) struct Ui {
     /// Settings saves and Quit Hex a fixture recorded.
     saved: usize,
     quit_requested: bool,
+    /// The person asked for an update check (the footer or the menu bar),
+    /// so the footer says how it went.
+    update_asked: bool,
 }
 
 /// Which of the window's text editors hold unsaved typing.
@@ -721,11 +765,15 @@ impl Ui {
         let store = host::history(&connect, settings.history_retention);
         #[cfg(target_os = "linux")]
         let paste = connect.is_some().then(paste_access::detect).flatten();
+        #[cfg(target_os = "linux")]
+        let clipboard_unrestorable =
+            connect.is_some() && crate::linux::clipboard::wayland_without_data_control();
         let mut ui = Self::with(settings, Service::Pending(connect));
         ui.error = error;
         #[cfg(target_os = "linux")]
         {
             ui.platform.paste = paste;
+            ui.platform.clipboard_unrestorable = clipboard_unrestorable;
         }
         // A mouse-button shortcut went back to its default: say so once.
         if ui.settings.mouse_shortcut_notice {
@@ -767,9 +815,10 @@ impl Ui {
             input_sources_listed_at: f64::NEG_INFINITY,
             microphones_listing: None,
             mic_level: general::MicLevel::default(),
+            general_search: TextEdit::default(),
             advanced: Vec::new(),
             labs_open: false,
-            lab_flash: None,
+            lab_store: labs::Store::default(),
             build_preview: None,
             capture: Capture::Idle,
             vocabulary,
@@ -796,6 +845,7 @@ impl Ui {
             hud_saved: false,
             saved: 0,
             quit_requested: false,
+            update_asked: false,
             window: None,
             tick_at: 0.0,
         }
@@ -1075,6 +1125,7 @@ impl Ui {
         self.flush_drafts();
         settings::cancel_capture(self);
         self.open = None;
+        self.general_search.clear();
         models::close(self);
         picker::close(self);
         explainer::close(self);
@@ -1114,6 +1165,10 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     #[cfg(target_os = "linux")]
     if event.key == rune::Key::Command('q') && !event.mods.shift && !event.mods.alt {
         ui.quit();
+        return true;
+    }
+    // ⌘F (Ctrl+F off macOS) searches Labs or General.
+    if general::focus_search_key(ui, event) {
         return true;
     }
     if let rune::Key::Command(digit @ '1'..='9') = event.key
@@ -1214,11 +1269,11 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     let now = Instant::now();
     let mut changed = ui.save_drafts(now);
     changed |= paste_access::poll(ui);
-    changed |= labs::poll_flash(ui, now);
-    // The OpenCode catalog is read only while the pane that uses it shows.
+    // The OpenCode catalog is read only while a pane that uses it shows:
+    // Modes, or Meetings › Settings while OpenCode writes the summaries.
     changed |= ui.models.poll(
         ui.live()
-            && ui.pane == Pane::Modes
+            && (ui.pane == Pane::Modes || platform_settings::summary_model_shown(ui))
             && ui.window.as_ref().is_some_and(rune::AppHandle::is_visible),
     );
     changed |= ui.history.poll(ui.pane == Pane::History);
@@ -1240,6 +1295,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     changed |= modes::poll_chooser(ui);
     changed |= voice_assistant::poll(ui);
     changed |= model_import::poll(ui);
+    changed |= meetings::poll_import(ui);
     changed |= found::poll(ui);
     let login_unknown = ui.platform.login_item.is_none();
     changed |= settings::poll_microphones(ui);
@@ -1335,7 +1391,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     // Menus and popovers mount above the page (rune-kit overlays).
     let mut layer = Vec::new();
     let (actions, body) = match ui.pane {
-        _ if ui.labs_open => (Vec::new(), labs::page(ui, p)),
+        _ if ui.labs_open => (vec![labs::tabs(ui, p)], labs::page(ui, p)),
         Pane::General => (Vec::new(), general::pane(ui, p, &mut layer)),
         Pane::Output => (Vec::new(), output::pane(ui, p, cx.is_reduced_motion())),
         Pane::Modes => modes::pane(ui, p, &mut layer),
@@ -1350,6 +1406,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
     };
     let panel = col()
         .key("panel")
+        .role("main")
         .grow(1.0)
         .shrink()
         .mt(8.0)
@@ -1368,15 +1425,21 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
             } else {
                 ui.pane.title()
             },
-            (ui.pane == Pane::Meetings && !ui.labs_open)
-                .then(|| meetings::view_switch(ui, p))
-                .flatten(),
+            if ui.labs_open {
+                Some(labs::search_field(ui, p))
+            } else {
+                (ui.pane == Pane::Meetings)
+                    .then(|| meetings::view_switch(ui, p))
+                    .flatten()
+            },
             actions,
         ))
         .child(body);
+    // The OS window is the accessibility tree's root; this box adds nothing
+    // to it.
     let window = row()
         .key("window")
-        .role("window")
+        .role("none")
         .fill(p.k.c.bg_deep)
         .hover_motion_within(Anim::INSTANT, Anim::INSTANT)
         .child(sidebar(ui, p))
@@ -1414,28 +1477,6 @@ fn window_focused(ui: &mut Ui, focused: bool, tx: &mut Tx) {
     }
 }
 
-/// The title bar of the content panel: the title, a view switch that stays
-/// beside it, and the pane's actions on the right.
-fn pane_header(p: Paint, title: &str, switch: Option<El>, actions: Vec<El>) -> El {
-    title_bar(row())
-        .key("pane-header")
-        .h(52.0)
-        .px(METRICS.gutter)
-        .gap(8.0)
-        .center_y()
-        .child(
-            text(title)
-                .key("pane-title")
-                .font(p.k.ty.body_medium)
-                .color(p.text())
-                .shrink()
-                .truncate(),
-        )
-        .children(switch.map(|switch| switch.ml(8.0)))
-        .child(el().key("header-spacer").grow(1.0))
-        .children(actions)
-}
-
 /// How far a scroll body's top and bottom edges fade out.
 const SCROLL_FADE: (f32, f32) = (4.0, 24.0);
 
@@ -1443,30 +1484,24 @@ const SCROLL_FADE: (f32, f32) = (4.0, 24.0);
 /// sits clear of the fades, so the first and last borders, rings, and fills
 /// are never cut; content needing room beside the edges (bordered cards)
 /// pads itself horizontally.
-fn scroll_body(key: &str, content: El) -> El {
-    faded_body(key, content, SCROLL_FADE)
+fn scroll_body(k: &rune_kit::Kit, key: &str, content: El) -> El {
+    faded_body(k, key, content, SCROLL_FADE)
 }
 
-/// A [`scroll_body`] with its own top and bottom fades.
-fn faded_body(key: &str, content: El, (top, bottom): (f32, f32)) -> El {
-    col()
-        .key(key)
-        .grow(1.0)
-        .shrink()
-        // Shrinks below its content in a fixed-height parent (#906).
-        .min_h(0.0)
-        .clip_fade(0.0, top, 0.0, bottom)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(col().key("inset").pt(top).pb(bottom).child(content))
+/// A [`scroll_body`] with its own top and bottom fades, and a scroll bar to
+/// drag while it overflows (#1209).
+fn faded_body(k: &rune_kit::Kit, key: &str, content: El, fades: (f32, f32)) -> El {
+    list_detail::faded_body_sticky(k, key, content, fades, false)
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 
-#[cfg(test)]
+#[cfg(any(test, hex_capture))]
 mod offscreen;
+
+#[cfg(test)]
+mod accessibility_tests;
 
 #[cfg(test)]
 mod snap_isolation;

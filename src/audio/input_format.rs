@@ -12,9 +12,20 @@ use cpal::{
 
 use super::{CaptureInstant, StreamErrorReporter, build_stream};
 
+/// A running microphone stream; dropping it stops capture.
+pub(super) enum InputStream {
+    Cpal {
+        _stream: Stream,
+    },
+    #[cfg(target_os = "windows")]
+    Wasapi {
+        _capture: super::wasapi_capture::WasapiCapture,
+    },
+}
+
 /// A started microphone stream and the channels its callback feeds.
 pub(super) struct StartedStream {
-    pub stream: Stream,
+    pub stream: InputStream,
     pub chunks: Receiver<(Vec<f32>, CaptureInstant)>,
     pub stream_errors: Receiver<String>,
     pub hex_microphone: crate::audio::hex_microphone::CaptureFeedSwitch,
@@ -36,6 +47,23 @@ pub(super) fn start_stream_with_fallback(
     let supported = device
         .default_input_config()
         .wrap_err("could not read the input device configuration")?;
+    // ALSA's default period, PipeWire's included, can be large: about a
+    // second of audio per chunk put speech from before the press into the
+    // pre-roll (#1309). Ask for about 20 ms first.
+    #[cfg(target_os = "linux")]
+    if let Some(&period) =
+        fixed_buffer_sizes(supported.sample_rate(), supported.buffer_size()).first()
+    {
+        match start_stream(device, &supported, period, default_name.clone()) {
+            Ok(started) => return Ok(started),
+            Err(error) => tracing::warn!(
+                error = format!("{error:#}"),
+                device = %device_name,
+                buffer = ?period,
+                "the microphone refused a short period; using its default"
+            ),
+        }
+    }
     let error = match start_stream(
         device,
         &supported,
@@ -50,15 +78,31 @@ pub(super) fn start_stream_with_fallback(
         device = %device_name,
         "the microphone refused its default format; trying the others it lists"
     );
+    // Intel Smart Sound refused every stream cpal built, at any format and
+    // buffer, so Hex tries its own WASAPI paths next (#988).
+    #[cfg(target_os = "windows")]
+    match super::wasapi_capture::start(device, device_name) {
+        Ok(started) => return Ok(started),
+        Err(wasapi_error) => tracing::warn!(
+            error = format!("{wasapi_error:#}"),
+            device = %device_name,
+            cpal_thread_apartment = %super::wasapi_capture::apartment(),
+            "the microphone refused every direct wasapi path; trying the formats it lists"
+        ),
+    }
     // Some drivers refuse every format with the backend's default buffer
     // (Intel Smart Sound answered E_INVALIDARG for each, #988) yet accept
     // the same format with an explicit buffer duration, so each format is
-    // tried both ways.
-    let mut candidates = vec![(supported, fixed_buffer_size(&supported))];
+    // tried with explicit buffers too.
+    let mut candidates = fixed_buffer_sizes(supported.sample_rate(), supported.buffer_size())
+        .into_iter()
+        .map(|buffer| (supported, buffer))
+        .collect::<Vec<_>>();
     for candidate in alternative_input_configs(device, &supported) {
         candidates.push((candidate, BufferSize::Default));
-        let fixed = fixed_buffer_size(&candidate);
-        candidates.push((candidate, fixed));
+        for fixed in fixed_buffer_sizes(candidate.sample_rate(), candidate.buffer_size()) {
+            candidates.push((candidate, fixed));
+        }
     }
     for (candidate, buffer_size) in candidates {
         match start_stream(device, &candidate, buffer_size, default_name.clone()) {
@@ -82,15 +126,24 @@ pub(super) fn start_stream_with_fallback(
     Err(error)
 }
 
-/// An explicit buffer of about 20 ms at `config`'s rate, within the range
-/// the device reports.
-fn fixed_buffer_size(config: &SupportedStreamConfig) -> BufferSize {
-    let frames = (config.sample_rate() / 50).max(1);
-    let frames = match *config.buffer_size() {
-        SupportedBufferSize::Range { min, max } if min <= max => frames.clamp(min, max),
-        _ => frames,
+/// Explicit buffers to try at `rate`: about 20 ms within the range the
+/// device reports, then 20 ms and 100 ms as they are. The reported range
+/// can top out at the device's short default period, which the Intel Smart
+/// Sound driver refuses in shared mode while it takes 20 ms or more (#988).
+fn fixed_buffer_sizes(rate: u32, reported: &SupportedBufferSize) -> Vec<BufferSize> {
+    let twenty_ms = (rate / 50).max(1);
+    let clamped = match *reported {
+        SupportedBufferSize::Range { min, max } if min <= max => twenty_ms.clamp(min, max),
+        _ => twenty_ms,
     };
-    BufferSize::Fixed(frames)
+    let mut sizes = Vec::with_capacity(3);
+    for frames in [clamped, twenty_ms, (rate / 10).max(1)] {
+        let size = BufferSize::Fixed(frames);
+        if !sizes.contains(&size) {
+            sizes.push(size);
+        }
+    }
+    sizes
 }
 
 fn is_supported_sample_format(format: SampleFormat) -> bool {
@@ -224,10 +277,33 @@ fn start_stream(
         )
     })?;
     Ok(StartedStream {
-        stream,
+        stream: InputStream::Cpal { _stream: stream },
         chunks,
         stream_errors,
         hex_microphone,
         sample_rate,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_buffers_go_past_a_short_reported_range() {
+        // A range that tops out at a 10 ms period still gets 20 ms and 100 ms.
+        let reported = SupportedBufferSize::Range { min: 144, max: 480 };
+        assert_eq!(
+            fixed_buffer_sizes(48_000, &reported),
+            vec![
+                BufferSize::Fixed(480),
+                BufferSize::Fixed(960),
+                BufferSize::Fixed(4_800),
+            ]
+        );
+        assert_eq!(
+            fixed_buffer_sizes(48_000, &SupportedBufferSize::Unknown),
+            vec![BufferSize::Fixed(960), BufferSize::Fixed(4_800)]
+        );
+    }
 }

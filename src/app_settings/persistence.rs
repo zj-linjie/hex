@@ -83,6 +83,8 @@ impl AppSettings {
         settings.repair_mouse_shortcuts();
         #[cfg(target_os = "linux")]
         settings.repair_special_keys();
+        #[cfg(target_os = "linux")]
+        settings.repair_section_key();
         settings.normalize_double_tap_settings();
         settings.migrate_legacy_replacements();
         settings.normalize_mode_application_names();
@@ -146,7 +148,9 @@ impl AppSettings {
         if !policy.any() {
             return Cow::Borrowed(self);
         }
-        let saved = saved.map_or_else(Self::default, |data| decode(data).0);
+        let mut saved = saved.map_or_else(Self::default, |data| decode(data).0);
+        // A file from before `meetings.summaries` keeps its choice under a lock.
+        saved.migrate_meeting_summaries();
         let mut written = self.clone();
         policy.keep_saved(&mut written, &saved);
         Cow::Owned(written)

@@ -1,3 +1,4 @@
+use super::accessibility_tests::a11y_value;
 use super::settings::{desktop_shortcut, recorded_binding, validate};
 use super::*;
 use crate::transcription::models::TranscriptionSelection;
@@ -62,6 +63,24 @@ fn tap(rt: &mut Runtime<Ui>, key: &str) {
     let (x, y) = rt.find(key).unwrap_or_else(|| panic!("no element {key}"));
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
+    settle(rt);
+}
+
+/// Opens Labs with every group unfolded, so each card is on screen.
+fn open_labs(rt: &mut Runtime<Ui>) {
+    tap(rt, "nav-labs");
+    unfold_labs(rt);
+}
+
+fn unfold_labs(rt: &mut Runtime<Ui>) {
+    for group in crate::labs::Group::ALL {
+        rt.state
+            .settings
+            .labs
+            .groups
+            .insert(group.id().to_string(), true);
+    }
+    rt.invalidate();
     settle(rt);
 }
 
@@ -203,6 +222,44 @@ fn an_unconfirmed_portal_shortcut_is_not_called_refused() {
     assert!(rt.find("basics/refused").is_none());
 }
 
+/// #1120: a check the person asked for says how it went; the hourly check
+/// alone keeps the footer's words.
+#[test]
+fn an_asked_update_check_says_how_it_went() {
+    fn status(rt: &mut Runtime<Ui>, status: DesktopUpdateStatus) {
+        rt.state
+            .view
+            .as_mut()
+            .expect("a service view")
+            .update_status = status;
+        rt.invalidate();
+        rt.frame(0.0);
+    }
+    let mut rt = runtime("portal", true, PANE_SIZE);
+    status(&mut rt, DesktopUpdateStatus::Current);
+    assert!(texts(&rt).iter().any(|text| text == "Check for updates"));
+    tap(&mut rt, "update-status");
+    assert!(
+        sent(&rt)
+            .iter()
+            .any(|request| matches!(request, Request::Desktop(DesktopAction::CheckForUpdates)))
+    );
+    status(&mut rt, DesktopUpdateStatus::Checking);
+    assert!(
+        texts(&rt)
+            .iter()
+            .any(|text| text == "Checking for updates…")
+    );
+    status(&mut rt, DesktopUpdateStatus::Current);
+    assert!(texts(&rt).iter().any(|text| text == "Hex is up to date"));
+    status(&mut rt, DesktopUpdateStatus::Failed);
+    assert!(
+        texts(&rt)
+            .iter()
+            .any(|text| text == "Couldn't check for updates")
+    );
+}
+
 #[test]
 fn a_refused_note_sits_with_the_shortcut_the_desktop_kept() {
     let mut rt = runtime("portal", true, GOLDEN_SIZE);
@@ -262,6 +319,26 @@ fn toggles_save_through_the_host() {
 }
 
 #[test]
+fn gnome_desktops_point_to_the_clipboard_lab_until_it_is_on() {
+    let mut rt = runtime("portal", true, TALL_SIZE);
+    open_advanced(&mut rt, Pane::General);
+    assert!(
+        rt.find("clipboard-restore-note").is_none(),
+        "only desktops without data-control"
+    );
+    rt.state.platform.clipboard_unrestorable = true;
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(rt.find("clipboard-restore-note").is_some());
+    open_labs(&mut rt);
+    tap(&mut rt, "lab-gnome-clipboard-restore");
+    assert!(rt.state.settings.labs.gnome_clipboard_restore);
+    tap(&mut rt, "nav-labs");
+    assert!(rt.find("terminal-paste").is_some(), "back on General");
+    assert!(rt.find("clipboard-restore-note").is_none());
+}
+
+#[test]
 fn restore_default_brings_back_paste_last_only_with_its_lab_on() {
     use crate::app_settings::HotkeyBinding;
     let default = HotkeyBinding::paste_last_default();
@@ -306,6 +383,121 @@ fn restore_default_brings_back_paste_last_only_with_its_lab_on() {
             ..
         }
     ));
+}
+
+#[test]
+fn settings_search_shows_with_its_lab_and_filters_general() {
+    let mut rt = runtime("portal", true, TALL_SIZE);
+    assert!(
+        rt.find("settings-search").is_none(),
+        "hidden while Labs › Settings search is off"
+    );
+
+    rt.state.settings.labs.settings_search = true;
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(rt.find("settings-search").is_some());
+    key(&mut rt, Key::Command('f'), Mods::default());
+    assert!(rt.state.general_search.focused, "⌘F focuses the field");
+
+    // A match keeps its card and hides the others.
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new("microphone"));
+    settle(&mut rt);
+    assert!(rt.find("microphone").is_some());
+    assert!(rt.find("transcription").is_none());
+    assert!(rt.find("settings-empty").is_none());
+
+    // Advanced stays folded, but its rows match.
+    assert!(!rt.state.advanced.contains(&Pane::General));
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new("terminal paste"));
+    settle(&mut rt);
+    assert!(rt.find("terminal-paste").is_some());
+    assert!(
+        rt.find("advanced-toggle").is_none(),
+        "the fold hides while searching"
+    );
+
+    // Nothing matching shows the empty state; clearing restores the pane.
+    rt.update(|ui, _| {
+        ui.general_search = rune::TextEdit::new("no such setting");
+    });
+    settle(&mut rt);
+    assert!(rt.find("settings-empty").is_some());
+    assert!(rt.find("microphone").is_none());
+
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new(""));
+    settle(&mut rt);
+    assert!(rt.find("settings-empty").is_none());
+    assert!(rt.find("microphone").is_some());
+    assert!(rt.find("basics").is_some());
+}
+
+#[test]
+fn settings_search_matches_descriptions() {
+    let mut rt = runtime("mac-settings", true, TALL_SIZE);
+    rt.state.settings.labs.settings_search = true;
+    rt.state.settings.shortcut_mode = crate::dictation::ShortcutMode::Toggle;
+    rt.invalidate();
+    settle(&mut rt);
+
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new("airpods"));
+    settle(&mut rt);
+    assert!(rt.find("avoid-bluetooth-microphone").is_some());
+
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new("discards"));
+    settle(&mut rt);
+    assert!(rt.find("cancel-shortcut").is_some());
+    assert!(rt.find("settings-empty").is_none());
+}
+
+#[test]
+fn settings_search_keeps_permissions_and_status_cards() {
+    // A permissions card always shows, even when nothing matches it.
+    let mut rt = runtime("mac-settings-permissions", true, TALL_SIZE);
+    rt.state.settings.labs.settings_search = true;
+    rt.invalidate();
+    settle(&mut rt);
+    rt.update(|ui, _| {
+        ui.general_search = rune::TextEdit::new("no such setting");
+    });
+    settle(&mut rt);
+    assert!(rt.find("permissions").is_some());
+    assert!(rt.find("settings-empty").is_some());
+
+    // Without a portal, the desktop-commands card counts as a match, as
+    // does the listener card on its title.
+    let mut rt = runtime("commands", true, TALL_SIZE);
+    rt.state.settings.labs.settings_search = true;
+    rt.invalidate();
+    settle(&mut rt);
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new("shortcut"));
+    settle(&mut rt);
+    assert!(rt.find("desktop-shortcuts").is_some());
+    assert!(rt.find("settings-empty").is_none());
+
+    rt.update(|ui, _| ui.general_search = rune::TextEdit::new("enabled"));
+    settle(&mut rt);
+    assert!(rt.find("listening").is_some());
+    assert!(rt.find("settings-empty").is_none());
+}
+
+#[test]
+fn command_f_focuses_general_search_only_with_its_lab_and_pane() {
+    let mut rt = runtime("mac-settings", true, TALL_SIZE);
+    key(&mut rt, Key::Command('f'), Mods::default());
+    assert!(!rt.state.general_search.focused, "the lab is off");
+
+    rt.state.settings.labs.settings_search = true;
+    rt.invalidate();
+    settle(&mut rt);
+    key(&mut rt, Key::Command('f'), Mods::default());
+    assert!(rt.state.general_search.focused);
+
+    rt.state.general_search.focused = false;
+    tap(&mut rt, "nav-history");
+    assert_eq!(rt.state.pane, Pane::History);
+    key(&mut rt, Key::Command('f'), Mods::default());
+    assert!(!rt.state.general_search.focused, "another pane");
 }
 
 #[test]
@@ -1092,11 +1284,54 @@ fn history_selects_deletes_and_clears_in_two_steps() {
     assert_eq!(rt.state.history.selected, Some(3));
     tap(&mut rt, "history-delete");
     assert!(rt.state.history.entries.iter().all(|entry| entry.id != 3));
-    tap(&mut rt, "history-clear");
+    // Clear all history… sits at the bottom of the retention menu and only
+    // asks; Cancel keeps everything, and only the confirmation clears.
+    tap(&mut rt, "history-retention-field-trigger");
+    let clear = menu_item(&rt, "history-retention", "Clear all history…");
+    tap(&mut rt, &clear);
     assert!(rt.state.history.clear_armed);
     assert_eq!(rt.state.history.entries.len(), 2);
-    tap(&mut rt, "history-clear");
+    assert!(rt.find("history-retention-field-trigger").is_none());
+    tap(&mut rt, "history-cancel-clear");
+    assert!(!rt.state.history.clear_armed);
+    assert_eq!(rt.state.history.entries.len(), 2);
+    tap(&mut rt, "history-retention-field-trigger");
+    tap(&mut rt, &clear);
+    tap(&mut rt, "history-confirm-clear");
     assert!(rt.state.history.entries.is_empty());
+}
+
+#[test]
+fn history_menu_sets_retention_and_keep_recordings() {
+    let mut rt = runtime("history-menu", true, PANE_SIZE);
+    let shown = texts(&rt);
+    assert!(shown.iter().any(|text| text == "Kept 7 days"));
+    let day = menu_item(&rt, "history-retention", "24 hours");
+    tap(&mut rt, &day);
+    assert_eq!(
+        rt.state.settings.history_retention,
+        crate::history::HistoryRetention::Day
+    );
+    assert!(texts(&rt).iter().any(|text| text == "Kept 24 hours"));
+    tap(&mut rt, "history-retention-field-trigger");
+    let audio = menu_item(&rt, "history-retention", "Keep audio too");
+    tap(&mut rt, &audio);
+    assert!(rt.state.settings.labs.keep_recordings);
+    tap(&mut rt, "history-retention-field-trigger");
+    let off = menu_item(&rt, "history-retention", "Off");
+    tap(&mut rt, &off);
+    assert!(texts(&rt).iter().any(|text| text == "History off"));
+}
+
+/// The key of `menu`'s item labelled `label`.
+fn menu_item(rt: &Runtime<Ui>, menu: &str, label: &str) -> String {
+    let prefix = format!("{menu}-item");
+    rt.elements()
+        .into_iter()
+        .filter_map(|e| e.key.filter(|key| key.starts_with(&prefix)).zip(e.label))
+        .find(|(_, shown)| shown == label)
+        .map(|(key, _)| key)
+        .unwrap_or_else(|| panic!("{menu} has no {label:?}"))
 }
 
 /// What is still changing one short frame after an input: hover and press
@@ -1219,6 +1454,8 @@ fn history_search_without_matches_says_so() {
             audio_ms: 900,
             inference_ms: 80,
             total_ms: 200,
+            recording: None,
+            model: None,
         })
         .unwrap();
     let mut rt = runtime("history-empty", true, PANE_SIZE);
@@ -1237,6 +1474,152 @@ fn history_search_without_matches_says_so() {
         texts
             .iter()
             .all(|text| text != "No dictations retained yet.")
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn transcribe_again_offers_a_language_only_for_models_that_take_one() {
+    use crate::transcription::models::{AUTO_LANGUAGE, TranscriptionModelId};
+    let whisper = history::language_choices(TranscriptionModelId::WhisperLargeV3Turbo).unwrap();
+    assert_eq!(whisper[0], AUTO_LANGUAGE);
+    assert!(whisper.contains(&"en") && whisper.contains(&"es"));
+    assert!(history::language_choices(TranscriptionModelId::ParakeetV3).is_none());
+    assert!(history::language_choices(TranscriptionModelId::GigaAmV3).is_none());
+
+    let mut rt = runtime("history", true, GOLDEN_SIZE);
+    rt.state.settings.labs.keep_recordings = true;
+    rt.state.settings.transcription.language = "es".into();
+    history::choose_model(
+        &mut rt.state,
+        2,
+        TranscriptionModelId::WhisperLargeV3Turbo,
+        "Whisper",
+    );
+    let pending = rt.state.history.pending.as_ref().unwrap();
+    assert_eq!(pending.id, 2);
+    assert_eq!(pending.language, "es", "it starts at the saved language");
+    assert!(
+        rt.state.history.again.is_none(),
+        "nothing runs before Transcribe"
+    );
+    assert_eq!(rt.state.settings.transcription.language, "es");
+
+    rt.state.settings.transcription.language = "pl".into();
+    history::choose_model(
+        &mut rt.state,
+        2,
+        TranscriptionModelId::CohereTranscribe,
+        "Cohere",
+    );
+    let pending = rt.state.history.pending.as_ref().unwrap();
+    assert!(
+        history::language_choices(TranscriptionModelId::CohereTranscribe)
+            .unwrap()
+            .contains(&pending.language.as_str()),
+        "an unsupported saved language falls back to one the model has"
+    );
+}
+
+#[test]
+fn transcribe_again_shows_only_with_its_lab_and_replace_updates_the_entry() {
+    use crate::history::{
+        History, HistoryDraft, HistoryKind, HistoryRetention, HistoryStore, Recording,
+    };
+    let directory = std::env::temp_dir().join(format!("hex-rune-again-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let history = History::new(HistoryStore::open(
+        directory.join("history.json"),
+        HistoryRetention::Week,
+        crate::history::now_ms(),
+    ));
+    let draft = |recording| HistoryDraft {
+        kind: HistoryKind::Dictation,
+        raw_text: "ship it".into(),
+        final_text: "Ship it.".into(),
+        application: None,
+        processing: None,
+        audio_ms: 900,
+        inference_ms: 80,
+        total_ms: 200,
+        recording,
+        model: Some("Parakeet v3".into()),
+    };
+    let plain = history.record(draft(None)).unwrap().unwrap();
+    let id = history
+        .record(draft(Some(Recording::from_samples(vec![0.2; 1_600]))))
+        .unwrap()
+        .unwrap();
+    let mut rt = runtime("history-empty", true, GOLDEN_SIZE);
+    rt.state.history = history::HistoryPane::shared(Some(history.clone()));
+    rt.state.history.reload();
+    rt.state.history.selected = Some(id);
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(rt.find("again").is_none(), "off, History is unchanged");
+
+    rt.state.settings.labs.keep_recordings = true;
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(rt.find("again").is_some());
+    rt.state.history.selected = Some(plain);
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(
+        rt.find("again").is_none(),
+        "an entry without audio has nothing to transcribe"
+    );
+
+    rt.state.history.selected = Some(id);
+    rt.state.history.again = Some(history::Again::finished(
+        id,
+        "Whisper",
+        Ok("Ship it now.".into()),
+    ));
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(texts(&rt).iter().any(|text| text == "Ship it now."));
+    tap(&mut rt, "again-copy");
+    assert_eq!(rt.copy_request.as_deref(), Some("Ship it now."));
+    tap(&mut rt, "again-replace");
+    settle(&mut rt);
+    assert!(rt.state.history.again.is_none());
+    let entry = history
+        .search("")
+        .into_iter()
+        .find(|entry| entry.id == id)
+        .unwrap();
+    assert_eq!(entry.final_text, "Ship it now.");
+    assert_eq!(entry.model.as_deref(), Some("Whisper"));
+    assert!(entry.has_recording(), "replacing keeps the recording");
+    assert_eq!(entry.versions.len(), 1);
+    assert_eq!(entry.versions[0].final_text, "Ship it.");
+    assert_eq!(entry.versions[0].model.as_deref(), Some("Parakeet v3"));
+
+    // The kept version shows with its model, copies, and comes back.
+    let shown = texts(&rt);
+    assert!(shown.iter().any(|text| text == "Whisper"), "{shown:?}");
+    assert!(shown.iter().any(|text| text.starts_with("Parakeet v3 · ")));
+    tap(&mut rt, "version0/actions/copy");
+    assert_eq!(rt.copy_request.as_deref(), Some("Ship it."));
+    tap(&mut rt, "version0/actions/use");
+    settle(&mut rt);
+    let entry = history
+        .search("")
+        .into_iter()
+        .find(|entry| entry.id == id)
+        .unwrap();
+    assert_eq!(entry.final_text, "Ship it.");
+    assert_eq!(entry.versions[0].final_text, "Ship it now.");
+
+    rt.state.settings.labs.keep_recordings = false;
+    rt.invalidate();
+    settle(&mut rt);
+    assert!(rt.find("versions").is_none(), "off, the versions hide");
+    assert!(
+        texts(&rt).iter().any(|text| text == "Parakeet v3"),
+        "the model shows either way"
     );
     let _ = std::fs::remove_dir_all(&directory);
 }
@@ -2055,14 +2438,27 @@ fn the_onboarding_model_list_starts_the_row_picked_or_the_recommended_one() {
     assert_eq!(rt.state.found.picked, Some(1));
 }
 
+/// The microphone field's value. An open menu is modal, so the field behind
+/// it leaves the accessibility tree: it is read with the menu closed.
+fn microphone_value(rt: &mut Runtime<Ui>) -> Option<String> {
+    let open = rt.state.open.take();
+    rt.invalidate();
+    settle(rt);
+    let value = a11y_value(rt, "microphone-control");
+    rt.state.open = open;
+    rt.invalidate();
+    settle(rt);
+    value
+}
+
 #[test]
 fn the_microphone_field_names_the_input_in_use() {
-    let field = |rt: &Runtime<Ui>| element(rt, "microphone-control").label;
-    let rt = runtime("mac-settings", true, PANE_SIZE);
-    assert_eq!(field(&rt).as_deref(), Some("System default, Kit Pods"));
+    let field = microphone_value;
+    let mut rt = runtime("mac-settings", true, TALL_SIZE);
+    assert_eq!(field(&mut rt).as_deref(), Some("System default, Kit Pods"));
 
-    let rt = runtime("mac-microphone-missing", true, PANE_SIZE);
-    assert_eq!(field(&rt).as_deref(), Some("System default, Kit Pods"));
+    let mut rt = runtime("mac-microphone-missing", true, TALL_SIZE);
+    assert_eq!(field(&mut rt).as_deref(), Some("System default, Kit Pods"));
     let texts = texts(&rt);
     assert!(texts.contains(&"not connected".to_owned()), "{texts:?}");
     assert!(texts.contains(&"Shure MV7 isn't connected; using your Mac's input".to_owned()));
@@ -2071,10 +2467,10 @@ fn the_microphone_field_names_the_input_in_use() {
 #[test]
 fn a_closed_lid_names_the_input_standing_in_for_the_built_in_microphone() {
     let note = "MacBook Pro Microphone is off while the lid is closed, so Hex listens to Studio Display Microphone";
-    let field = |rt: &Runtime<Ui>| element(rt, "microphone-control").label;
-    let mut rt = runtime("mac-microphone-lid-closed", true, PANE_SIZE);
+    let field = microphone_value;
+    let mut rt = runtime("mac-microphone-lid-closed", true, TALL_SIZE);
     assert_eq!(
-        field(&rt).as_deref(),
+        field(&mut rt).as_deref(),
         Some("System default, Studio Display Microphone")
     );
     let shown = texts(&rt);
@@ -2089,7 +2485,7 @@ fn a_closed_lid_names_the_input_standing_in_for_the_built_in_microphone() {
     rt.invalidate();
     settle(&mut rt);
     assert_eq!(
-        field(&rt).as_deref(),
+        field(&mut rt).as_deref(),
         Some("System default, Studio Display Microphone")
     );
     assert!(texts(&rt).contains(&note.to_owned()));
@@ -2100,7 +2496,7 @@ fn a_passed_over_bluetooth_default_names_the_input_in_use() {
     let note = "Kit Pods is Bluetooth, so Hex listens to MacBook Pro Microphone";
     let mut rt = runtime("mac-microphone-bluetooth", true, TALL_SIZE);
     assert_eq!(
-        element(&rt, "microphone-control").label.as_deref(),
+        a11y_value(&rt, "microphone-control").as_deref(),
         Some("System default, MacBook Pro Microphone")
     );
     assert!(texts(&rt).contains(&note.to_owned()), "{:?}", texts(&rt));
@@ -2323,6 +2719,7 @@ fn goldens() {
         check_golden("portal", dark, GOLDEN_SIZE);
         for scene in [
             "history",
+            "mac-labs",
             "mac-labs-link",
             "output",
             "modes",
@@ -2340,6 +2737,10 @@ fn goldens() {
     check_golden("output-trust", false, PANE_SIZE);
     check_golden("picker-custom-models", false, PANE_SIZE);
     check_golden("picker-found", false, PANE_SIZE);
+    check_golden("vocabulary-budget", false, PANE_SIZE);
+    check_golden("windows-labs", false, PANE_SIZE);
+    check_golden("linux-labs", false, PANE_SIZE);
+    check_golden("history-menu", true, PANE_SIZE);
 }
 
 mod onboarding_check;
