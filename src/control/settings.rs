@@ -440,6 +440,11 @@ const KEYS: &[Key] = &[
         "Labs: a meeting recording Hex started on its own stops 30 s after its call app leaves the microphone and goes quiet, unless you keep recording (macOS)",
     ),
     key(
+        "labs.compatible_rewrite",
+        Kind::Bool,
+        "Labs: direct compatible text model rewriting",
+    ),
+    key(
         "labs.voice_assistant",
         Kind::Bool,
         "Labs: Xiaozhi voice assistant (macOS)",

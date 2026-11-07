@@ -61,7 +61,8 @@ impl Feature {
             | Self::HideMenuBarIcon
             | Self::SettingsSearch
             | Self::Playground => Group::Dictation,
-            Self::SmartSpacing
+            Self::CompatibleRewrite
+            | Self::SmartSpacing
             | Self::SpokenFormatting
             | Self::SpokenSymbols
             | Self::FillerWords

@@ -15,6 +15,21 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, &str)] = &[
+    ("Selected: {}", "Selected: {}"),
+    ("Connected: {} models", "Connected: {} models"),
+    ("Compatible text model", "Compatible text model"),
+    ("Rewrite dictation through a configured text model", "Rewrite dictation through a configured text model"),
+    ("Rewrite with compatible model", "Rewrite with compatible model"),
+    ("Text rewrite", "Text rewrite"),
+    ("Compatible model", "Compatible model"),
+    ("A cloud service receives your transcript. Local addresses stay on this computer.", "A cloud service receives your transcript. Local addresses stay on this computer."),
+    ("Configure model", "Configure model"),
+    ("Use DeepSeek preset", "Use DeepSeek preset"),
+    ("API base URL", "API base URL"),
+    ("Model ID", "Model ID"),
+    ("Credential JSON file path (optional)", "Credential JSON file path (optional)"),
+    ("Check connection and list models", "Check connection and list models"),
+    ("Save model", "Save model"),
     ("Assistant shortcut is already in use; choose another shortcut.", "O atalho do assistente já está em uso; escolha outro."),
     ("Receiving reply", "Recebendo resposta"),
     ("Voice Assistant", "Assistente de voz"),

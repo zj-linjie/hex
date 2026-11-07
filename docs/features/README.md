@@ -1037,6 +1037,24 @@ Gaps: the bar and touch are not verified on a real Windows PC or touchscreen.
 
 ## Process Text With Modes
 
+The personal macOS fork also has a Labs opt-in, Compatible text model, off by
+default. When it is on, Output offers Off, OpenCode, and a direct OpenAI-style
+Chat Completions endpoint for Global. The compatible service accepts an HTTPS
+base URL (or loopback HTTP), a model ID, and an optional path to a private JSON
+file with an `api_key` or `key` string; the key itself is not stored in settings.
+If that file also names a `url`, its origin must match the selected service. Output
+accepts the official DeepSeek API-key management page as a reference for the
+official DeepSeek API origin. Output
+can query the service's model list, and manual model IDs remain available when
+the list is unsupported. A direct rewrite sends the transcript and the same
+prompt/context as the OpenCode rewrite to the configured service. Failure,
+timeout, an incomplete or empty response falls back to the corrected transcript.
+Turning the lab off preserves the existing OpenCode selection. Application and
+website modes still select their own processing instead of Global's rewrite.
+Implementation: `dictation/compatible_api.rs`, `dictation/processor.rs`, and
+`rune_ui/output.rs`. These are code-level contracts; a live provider and native
+UI interaction have not yet been verified.
+
 ```ts
 Output (main sidebar, replaces the Modes editor) // rune_ui/output.rs; scenes output*
 ├── Trust prompt -> Allow a config that uses fetch or programs (only when one asks)

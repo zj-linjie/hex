@@ -52,6 +52,18 @@ pub struct DictationPostProcessing {
     pub model: Option<String>,
     pub variant: Option<String>,
     pub deadline_seconds: u64,
+    /// Selects the experimental direct OpenAI-compatible service when the lab is on.
+    pub compatible: CompatibleRewriteSettings,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct CompatibleRewriteSettings {
+    pub selected: bool,
+    pub base_url: String,
+    pub model: String,
+    /// Path to a private JSON file containing `api_key`; never the key itself.
+    pub credential_path: String,
 }
 
 impl Default for DictationPostProcessing {
@@ -62,6 +74,7 @@ impl Default for DictationPostProcessing {
             model: None,
             variant: None,
             deadline_seconds: 30,
+            compatible: CompatibleRewriteSettings::default(),
         }
     }
 }
