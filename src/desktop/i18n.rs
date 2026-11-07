@@ -340,6 +340,21 @@ fn tables() -> &'static [HashMap<&'static str, &'static str>; 6] {
 /// Columns: Polish, Chinese (Simplified), Japanese, German, Spanish, Ukrainian.
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, [&str; 6])] = &[
+    ("Selected: {}", ["Selected: {}", "已选择：{}", "Selected: {}", "Selected: {}", "Selected: {}", "Selected: {}"]),
+    ("Connected: {} models", ["Connected: {} models", "已连接：{} 个模型", "Connected: {} models", "Connected: {} models", "Connected: {} models", "Connected: {} models"]),
+    ("Compatible text model", ["Compatible text model", "兼容文本模型", "Compatible text model", "Compatible text model", "Compatible text model", "Compatible text model"]),
+    ("Rewrite dictation through a configured text model", ["Rewrite dictation through a configured text model", "通过配置的文本模型润色听写内容", "Rewrite dictation through a configured text model", "Rewrite dictation through a configured text model", "Rewrite dictation through a configured text model", "Rewrite dictation through a configured text model"]),
+    ("Rewrite with compatible model", ["Rewrite with compatible model", "使用兼容模型润色", "Rewrite with compatible model", "Rewrite with compatible model", "Rewrite with compatible model", "Rewrite with compatible model"]),
+    ("Text rewrite", ["Text rewrite", "文本润色", "Text rewrite", "Text rewrite", "Text rewrite", "Text rewrite"]),
+    ("Compatible model", ["Compatible model", "兼容模型", "Compatible model", "Compatible model", "Compatible model", "Compatible model"]),
+    ("A cloud service receives your transcript. Local addresses stay on this computer.", ["A cloud service receives your transcript. Local addresses stay on this computer.", "云端服务会收到转写文字；本地地址由本机处理。", "A cloud service receives your transcript. Local addresses stay on this computer.", "A cloud service receives your transcript. Local addresses stay on this computer.", "A cloud service receives your transcript. Local addresses stay on this computer.", "A cloud service receives your transcript. Local addresses stay on this computer."]),
+    ("Configure model", ["Configure model", "配置模型", "Configure model", "Configure model", "Configure model", "Configure model"]),
+    ("Use DeepSeek preset", ["Use DeepSeek preset", "使用 DeepSeek 预设", "Use DeepSeek preset", "Use DeepSeek preset", "Use DeepSeek preset", "Use DeepSeek preset"]),
+    ("API base URL", ["API base URL", "API 基础地址", "API base URL", "API base URL", "API base URL", "API base URL"]),
+    ("Model ID", ["Model ID", "模型 ID", "Model ID", "Model ID", "Model ID", "Model ID"]),
+    ("Credential JSON file path (optional)", ["Credential JSON file path (optional)", "凭据 JSON 文件路径（可选）", "Credential JSON file path (optional)", "Credential JSON file path (optional)", "Credential JSON file path (optional)", "Credential JSON file path (optional)"]),
+    ("Check connection and list models", ["Check connection and list models", "检查连接并获取模型", "Check connection and list models", "Check connection and list models", "Check connection and list models", "Check connection and list models"]),
+    ("Save model", ["Save model", "保存模型", "Save model", "Save model", "Save model", "Save model"]),
     ("Assistant shortcut is already in use; choose another shortcut.", ["Skrót asystenta jest już używany; wybierz inny.", "助手快捷键已被占用，请选择其他快捷键。", "アシスタントのショートカットは使用中です。別のキーを選んでください。", "Das Assistenten-Kürzel ist bereits belegt; wähle ein anderes.", "El atajo del asistente ya está en uso; elige otro.", "Скорочення асистента вже використовується; виберіть інше."]),
     ("Receiving reply", ["Odbieranie odpowiedzi", "正在接收回复", "応答を受信中", "Antwort wird empfangen", "Recibiendo respuesta", "Отримання відповіді"]),
     ("Voice Assistant", ["Asystent głosowy", "语音助手", "音声アシスタント", "Sprachassistent", "Asistente de voz", "Голосовий асистент"]),

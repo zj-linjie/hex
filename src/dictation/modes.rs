@@ -95,6 +95,8 @@ pub(crate) fn uses_page(settings: &DictationProcessingSettings) -> bool {
             .chain(&settings.modes)
             .any(|mode| {
                 mode.post_processing.enabled
+                    || (mode.post_processing.compatible.selected
+                        && crate::dictation::compatible_api::enabled())
                     || mode
                         .transformations
                         .iter()

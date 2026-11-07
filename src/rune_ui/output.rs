@@ -58,6 +58,14 @@ pub(super) struct OutputPane {
     pub(super) order: examples::Order,
     /// The agent card's turning spark.
     pub(super) spark: Spark,
+    compatible_editing: bool,
+    compatible_url: TextEdit,
+    compatible_model: TextEdit,
+    compatible_credential: TextEdit,
+    compatible_check: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
+    compatible_models: Vec<String>,
+    compatible_checked_source: Option<(String, String)>,
+    compatible_status: Option<String>,
 }
 
 impl OutputPane {
@@ -73,11 +81,31 @@ impl OutputPane {
 /// Steps the agent card's examples to `clock`; true when they changed.
 pub(super) fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     let (changed, wait) = examples::poll(&mut ui.output.examples, clock);
+    let result = ui
+        .output
+        .compatible_check
+        .as_ref()
+        .and_then(|rx| rx.try_recv().ok());
+    let checked = result.is_some();
+    if let Some(result) = result {
+        ui.output.compatible_check = None;
+        match result {
+            Ok(models) => {
+                ui.output.compatible_status =
+                    Some(tr_fill("Connected: {} models", &models.len().to_string()));
+                ui.output.compatible_models = models;
+            }
+            Err(error) => {
+                ui.output.compatible_status = Some(error);
+                ui.output.compatible_models.clear();
+            }
+        }
+    }
     let wait = wait.min(super::spark::poll(&ui.output.spark, clock));
     if ui.window.as_ref().is_none_or(rune::AppHandle::is_visible) {
         tx.wake_after(std::time::Duration::from_secs_f64(wait.max(0.0)));
     }
-    changed
+    changed || checked
 }
 
 /// What runs a step: Hex itself, a script from the person's config, or
@@ -133,10 +161,24 @@ fn steps(ui: &Ui, mode: &DictationMode) -> Vec<Step> {
             runner: Runner::BuiltIn,
         });
     }
-    if mode.post_processing.enabled {
+    if mode.post_processing.enabled
+        || (ui.settings.labs.compatible_rewrite && mode.post_processing.compatible.selected)
+    {
         steps.push(Step {
-            title: tr("Rewrite with OpenCode").into(),
-            detail: mode.post_processing.model.clone(),
+            title: if ui.settings.labs.compatible_rewrite
+                && mode.post_processing.compatible.selected
+            {
+                tr("Rewrite with compatible model").into()
+            } else {
+                tr("Rewrite with OpenCode").into()
+            },
+            detail: if ui.settings.labs.compatible_rewrite
+                && mode.post_processing.compatible.selected
+            {
+                Some(mode.post_processing.compatible.model.clone())
+            } else {
+                mode.post_processing.model.clone()
+            },
             runner: Runner::Rewrite,
         });
     }
@@ -197,6 +239,9 @@ pub(super) fn pane(ui: &Ui, p: Paint, reduced: bool) -> El {
         .child(agent_card(ui, p, reduced))
         .child(every_dictation(ui, p, &processing.default_mode))
         .child(try_card(ui, p, &processing.default_mode));
+    if ui.settings.labs.compatible_rewrite {
+        content = content.child(compatible_settings(ui, p));
+    }
     if !processing.modes.is_empty() {
         content = content.child(some_apps(ui, p, &processing.modes));
     }
@@ -204,6 +249,226 @@ pub(super) fn pane(ui: &Ui, p: Paint, reduced: bool) -> El {
         content = content.child(without_processing(ui, p));
     }
     super::scroll_body(p.k, "output-scroll", content)
+}
+
+fn compatible_settings(ui: &Ui, p: Paint) -> El {
+    let config = &ui
+        .settings
+        .dictation_processing
+        .default_mode
+        .post_processing;
+    let selected = if config.compatible.selected {
+        tr("Compatible model")
+    } else if config.enabled {
+        "OpenCode"
+    } else {
+        tr("Off")
+    };
+    let mut panel = col()
+        .key("compatible-settings")
+        .gap(8.0)
+        .child(text(tr("Text rewrite")).font(p.k.ty.ui).color(p.text()))
+        .child(
+            text(tr_fill("Selected: {}", selected))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        )
+        .child(
+            text(tr(
+                "A cloud service receives your transcript. Local addresses stay on this computer.",
+            ))
+            .font(DESCRIPTION)
+            .color(p.muted()),
+        );
+    let mut choices = row().key("compatible-choices").gap(8.0);
+    for (label, mode) in [(tr("Off"), 0), ("OpenCode", 1), (tr("Compatible model"), 2)] {
+        choices = choices.child(
+            Button::new(label)
+                .variant(ButtonVariant::Ghost)
+                .on_press(move |ui: &mut Ui| {
+                    select_compatible_mode(ui, mode);
+                })
+                .build_push(p.k)
+                .key(format!("compatible-choice-{mode}")),
+        );
+    }
+    panel = panel.child(choices);
+    if !ui.output.compatible_editing {
+        panel = panel.child(
+            Button::new(tr("Configure model"))
+                .variant(ButtonVariant::Ghost)
+                .on_press(|ui: &mut Ui| {
+                    let config = &ui
+                        .settings
+                        .dictation_processing
+                        .default_mode
+                        .post_processing
+                        .compatible;
+                    ui.output.compatible_url = TextEdit::new(config.base_url.clone());
+                    ui.output.compatible_model = TextEdit::new(config.model.clone());
+                    ui.output.compatible_credential = TextEdit::new(config.credential_path.clone());
+                    ui.output.compatible_editing = true;
+                })
+                .build_push(p.k)
+                .key("compatible-configure"),
+        );
+    } else {
+        panel = panel
+            .child(
+                Button::new(tr("Use DeepSeek preset"))
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(|ui: &mut Ui| {
+                        ui.output.compatible_url = TextEdit::new("https://api.deepseek.com/v1");
+                        ui.output.compatible_model = TextEdit::new("deepseek-flash");
+                    })
+                    .build_push(p.k)
+                    .key("compatible-deepseek"),
+            )
+            .child(
+                TextInput::new(&ui.output.compatible_url)
+                    .label(tr("API base URL"))
+                    .placeholder("https://api.deepseek.com/v1")
+                    .width(None)
+                    .on_edit(|ui: &mut Ui| &mut ui.output.compatible_url)
+                    .build(p.k)
+                    .key("compatible-url"),
+            )
+            .child(
+                TextInput::new(&ui.output.compatible_model)
+                    .label(tr("Model ID"))
+                    .placeholder("deepseek-flash")
+                    .width(None)
+                    .on_edit(|ui: &mut Ui| &mut ui.output.compatible_model)
+                    .build(p.k)
+                    .key("compatible-model"),
+            )
+            .child(
+                TextInput::new(&ui.output.compatible_credential)
+                    .label(tr("Credential JSON file path (optional)"))
+                    .width(None)
+                    .on_edit(|ui: &mut Ui| &mut ui.output.compatible_credential)
+                    .build(p.k)
+                    .key("compatible-credential"),
+            )
+            .child(
+                Button::new(tr("Check connection and list models"))
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(|ui: &mut Ui| {
+                        if ui.output.compatible_check.is_some() {
+                            return;
+                        }
+                        let url = ui.output.compatible_url.text.trim().to_owned();
+                        let path = ui.output.compatible_credential.text.trim().to_owned();
+                        ui.output.compatible_checked_source = Some((url.clone(), path.clone()));
+                        ui.output.compatible_models.clear();
+                        let (sender, receiver) = std::sync::mpsc::channel();
+                        let waker = ui.modes.waker.clone();
+                        ui.output.compatible_status = Some(tr("Checking…").into());
+                        ui.output.compatible_check = Some(receiver);
+                        std::thread::spawn(move || {
+                            let result = crate::dictation::compatible_api::models(&url, &path)
+                                .map_err(|error| error.to_string());
+                            let _ = sender.send(result);
+                            if let Some(waker) = waker {
+                                waker();
+                            }
+                        });
+                    })
+                    .build_push(p.k)
+                    .key("compatible-check"),
+            )
+            .child(
+                Button::new(tr("Save model"))
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(|ui: &mut Ui| {
+                        let url = ui.output.compatible_url.text.trim().to_owned();
+                        let model = ui.output.compatible_model.text.trim().to_owned();
+                        let path = ui.output.compatible_credential.text.trim().to_owned();
+                        if ui.update(|settings| {
+                            let config = &mut settings
+                                .dictation_processing
+                                .default_mode
+                                .post_processing
+                                .compatible;
+                            config.base_url = url;
+                            config.model = model;
+                            config.credential_path = path;
+                        }) {
+                            ui.output.compatible_editing = false;
+                        }
+                    })
+                    .build_push(p.k)
+                    .key("compatible-save"),
+            );
+        if let Some(status) = &ui.output.compatible_status {
+            panel = panel.child(text(status).font(DESCRIPTION).color(p.muted()));
+        }
+        let same_source =
+            ui.output
+                .compatible_checked_source
+                .as_ref()
+                .is_some_and(|(url, path)| {
+                    url == ui.output.compatible_url.text.trim()
+                        && path == ui.output.compatible_credential.text.trim()
+                });
+        for (index, model) in ui
+            .output
+            .compatible_models
+            .iter()
+            .filter(|_| same_source)
+            .enumerate()
+        {
+            let choice = model.clone();
+            panel = panel.child(
+                Button::new(model)
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(move |ui: &mut Ui| {
+                        ui.output.compatible_model = TextEdit::new(choice.clone());
+                    })
+                    .build_push(p.k)
+                    .key(format!("compatible-model-choice-{index}")),
+            );
+        }
+    }
+    panel
+}
+
+fn select_compatible_mode(ui: &mut Ui, mode: u8) {
+    ui.update(|settings| {
+        let processing = &mut settings.dictation_processing.default_mode.post_processing;
+        if mode != 2 {
+            processing.enabled = mode == 1;
+        }
+        processing.compatible.selected = mode == 2;
+    });
+}
+
+#[cfg(test)]
+mod compatible_tests {
+    use super::*;
+    #[test]
+    fn switching_preserves_the_original_opencode_setting() {
+        let mut ui = Ui::fixture_base();
+        ui.settings
+            .dictation_processing
+            .default_mode
+            .post_processing
+            .enabled = true;
+        select_compatible_mode(&mut ui, 2);
+        let settings = &ui
+            .settings
+            .dictation_processing
+            .default_mode
+            .post_processing;
+        assert!(settings.compatible.selected && settings.enabled);
+        select_compatible_mode(&mut ui, 0);
+        let settings = &ui
+            .settings
+            .dictation_processing
+            .default_mode
+            .post_processing;
+        assert!(!settings.compatible.selected && !settings.enabled);
+    }
 }
 
 /// The pane's one action: the agent writes the steps, so this card is how

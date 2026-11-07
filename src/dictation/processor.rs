@@ -29,6 +29,7 @@ pub struct Profile {
     transformations: Vec<String>,
     /// The mode's own vocabulary, heard and spelled ahead of the shared list.
     vocabulary: Vec<VocabularyEntry>,
+    compatible: Option<crate::app_settings::CompatibleRewriteSettings>,
 }
 
 impl Profile {
@@ -42,6 +43,7 @@ impl Profile {
             replacements: ReplacementSet::default(),
             transformations: Vec::new(),
             vocabulary: Vec::new(),
+            compatible: None,
         }
     }
 
@@ -141,9 +143,20 @@ impl Profile {
             transformations
         };
         let mut profile = Self::new(name, &settings.prompt)
-            .ai_enabled(settings.enabled && !policy.locks(Lock::OpenCodeProcessing))
+            .ai_enabled(
+                (settings.enabled
+                    || (settings.compatible.selected
+                        && crate::dictation::compatible_api::enabled()))
+                    && !policy.locks(Lock::OpenCodeProcessing),
+            )
             .replacements(replacements)
             .transformations(transformations);
+        if settings.compatible.selected
+            && crate::dictation::compatible_api::enabled()
+            && !policy.locks(Lock::OpenCodeProcessing)
+        {
+            profile.compatible = Some(settings.compatible.clone());
+        }
         if let Some((provider, model)) = settings
             .model
             .as_deref()
@@ -362,7 +375,7 @@ impl Profiles {
         if !profile.ai_enabled {
             tracing::info!(
                 profile = profile.name,
-                "dictation post-processing skipped: the OpenCode rewrite is off for this mode"
+                "dictation post-processing skipped: the rewrite is off for this mode"
             );
         }
         if !profile.ai_enabled || numbers_only {
@@ -384,6 +397,7 @@ impl Profiles {
         let (text, observation) = generate_observed(
             &prompt,
             profile.model.as_ref(),
+            profile.compatible.as_ref(),
             profile.deadline,
             cancelled,
             &profile.name,
@@ -503,12 +517,31 @@ pub(crate) fn generate_text_with(
 fn generate_observed(
     prompt: &str,
     model: Option<&Model>,
+    compatible: Option<&crate::app_settings::CompatibleRewriteSettings>,
     deadline: Duration,
     cancelled: &AtomicBool,
     profile_name: &str,
     started: Instant,
 ) -> (Option<String>, ProcessingObservation) {
-    let result = generate_cancellable(prompt, model, deadline, cancelled);
+    let result = if let Some(config) = compatible {
+        if cancelled.load(Ordering::Acquire) {
+            Err(eyre!("Generation was cancelled"))
+        } else {
+            crate::dictation::compatible_api::credential(&config.credential_path, &config.base_url)
+                .and_then(|key| {
+                    crate::dictation::compatible_api::generate(
+                        &config.base_url,
+                        &config.model,
+                        key.as_deref(),
+                        prompt,
+                        deadline,
+                    )
+                })
+                .map(|text| Generated { text, model: None })
+        }
+    } else {
+        generate_cancellable(prompt, model, deadline, cancelled)
+    };
     let (text, fallback) = match result.map(|generated| generated.text) {
         Ok(text) if !text.trim().is_empty() => (Some(text.trim().into()), None),
         Ok(_) => (None, Some("processor returned empty text".into())),
@@ -1165,6 +1198,24 @@ mod tests {
     use std::net::TcpListener;
 
     use url::Url;
+
+    #[test]
+    fn unavailable_compatible_service_falls_back_to_corrected_text() {
+        let mut profile = Profile::new("Global", "Fix text").ai_enabled(true);
+        profile.compatible = Some(crate::app_settings::CompatibleRewriteSettings {
+            selected: true,
+            base_url: "http://remote.example/v1".into(),
+            model: "test-model".into(),
+            credential_path: String::new(),
+        });
+        let processed = Profiles::new(profile).process_cancellable(
+            "hello world",
+            &ContextSnapshot::default(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(processed.text, "hello world");
+        assert!(processed.observation.unwrap().fallback.is_some());
+    }
 
     #[test]
     fn managed_locks_drop_the_rewrite_and_transformations() {

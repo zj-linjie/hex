@@ -67,6 +67,7 @@ pub enum Feature {
     Meetings,
     VoiceFilter,
     VoiceAssistant,
+    CompatibleRewrite,
     Playground,
     LiveText,
     LiveChapters,
@@ -118,10 +119,11 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 52] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::VoiceAssistant,
+        Self::CompatibleRewrite,
         Self::Playground,
         Self::LiveText,
         Self::LiveChapters,
@@ -199,6 +201,7 @@ impl Feature {
             Self::VoiceFilter | Self::Playground => Audience::Dev,
             Self::Meetings
             | Self::VoiceAssistant
+            | Self::CompatibleRewrite
             | Self::LiveText
             | Self::LiveChapters
             | Self::VocabularyBiasing
@@ -300,7 +303,10 @@ impl Feature {
             | Self::Screenshots
             | Self::FollowLiveTranscript
             | Self::AnnotateReplay => 20261104,
-            Self::MoreCallApps | Self::SettingsSearch | Self::MeetingImport => 20261106,
+            Self::MoreCallApps
+            | Self::SettingsSearch
+            | Self::MeetingImport
+            | Self::CompatibleRewrite => 20261106,
         }
     }
 
@@ -333,6 +339,7 @@ impl Feature {
     pub fn on_this_os(self) -> bool {
         match self {
             Self::VoiceAssistant
+            | Self::CompatibleRewrite
             | Self::Meetings
             | Self::LiveChapters
             | Self::SubtitleExport
@@ -401,6 +408,7 @@ impl Feature {
             Self::Meetings => "meetings",
             Self::VoiceFilter => "voice-filter",
             Self::VoiceAssistant => "voice-assistant",
+            Self::CompatibleRewrite => "compatible-rewrite",
             Self::Playground => "playground",
             Self::LiveText => "live-text",
             Self::LiveChapters => "live-chapters",
@@ -458,6 +466,7 @@ impl Feature {
             Self::Meetings => "meetings.enabled",
             Self::VoiceFilter => "experimental.hex_microphone",
             Self::VoiceAssistant => "labs.voice_assistant",
+            Self::CompatibleRewrite => "labs.compatible_rewrite",
             Self::Playground => "labs.playground",
             Self::LiveText => "labs.live_text",
             Self::LiveChapters => "labs.live_chapters",
@@ -515,6 +524,7 @@ impl Feature {
         match self {
             Self::Meetings => "Record calls and keep transcripts (its own pane)",
             Self::VoiceAssistant => "Talk to your Xiaozhi assistant (macOS)",
+            Self::CompatibleRewrite => "Rewrite dictation through a compatible text model",
             Self::VoiceFilter => {
                 "Hex Microphone virtual input and real-time voice filters (its own pane)"
             }
@@ -656,6 +666,7 @@ impl Feature {
             Self::Meetings => settings.meetings.enabled,
             Self::VoiceFilter => settings.experimental.hex_microphone,
             Self::VoiceAssistant => settings.labs.voice_assistant,
+            Self::CompatibleRewrite => settings.labs.compatible_rewrite,
             Self::Playground => settings.labs.playground,
             Self::LiveText => settings.labs.live_text,
             Self::LiveChapters => settings.labs.live_chapters,
@@ -719,6 +730,7 @@ impl Feature {
             &mut settings.pause_browser_media,
             &mut settings.share_dictation_shortcut,
             &mut labs.voice_assistant,
+            &mut labs.compatible_rewrite,
             &mut labs.playground,
             &mut labs.live_text,
             &mut labs.live_chapters,
@@ -776,6 +788,7 @@ impl Feature {
             Self::Meetings => settings.meetings.enabled = on,
             Self::VoiceFilter => settings.experimental.hex_microphone = on,
             Self::VoiceAssistant => settings.labs.voice_assistant = on,
+            Self::CompatibleRewrite => settings.labs.compatible_rewrite = on,
             Self::Playground => settings.labs.playground = on,
             Self::LiveText => settings.labs.live_text = on,
             Self::LiveChapters => settings.labs.live_chapters = on,

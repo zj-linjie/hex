@@ -34,7 +34,7 @@ pub use voice_assistant::voice_assistant_enabled;
 #[cfg(hex_capture)]
 pub use capture::*;
 pub use dictation_processing::{
-    DictationMode, DictationPostProcessing, DictationProcessingSettings,
+    CompatibleRewriteSettings, DictationMode, DictationPostProcessing, DictationProcessingSettings,
 };
 pub use hotkeys::*;
 pub use labs::*;
@@ -731,6 +731,9 @@ impl AppSettings {
                 return managed.apply_runtime();
             }
         }
+        crate::dictation::compatible_api::set_enabled(
+            self.labs.compatible_rewrite && cfg!(target_os = "macos"),
+        );
         MICROPHONE_POLICY.store(
             u8::from(self.release_microphone_while_idle),
             Ordering::Release,

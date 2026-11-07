@@ -8,6 +8,7 @@ use super::*;
 pub struct LabsSettings {
     /// The voice assistant's opt-in switch (`Feature::VoiceAssistant`).
     pub voice_assistant: bool,
+    pub compatible_rewrite: bool,
     /// Live text beside the HUD while dictating.
     pub live_text: bool,
     pub live_chapters: bool,
@@ -104,6 +105,7 @@ impl Default for LabsSettings {
     fn default() -> Self {
         Self {
             voice_assistant: false,
+            compatible_rewrite: false,
             live_text: false,
             live_chapters: false,
             playground: false,

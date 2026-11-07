@@ -326,6 +326,14 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Record calls and keep transcripts"),
         ));
     }
+    if cfg!(target_os = "macos") {
+        rows.push(row(
+            Feature::CompatibleRewrite,
+            None,
+            tr("Compatible text model"),
+            tr("Rewrite dictation through a configured text model"),
+        ));
+    }
     if caps.voice_assistant {
         rows.push(row(
             Feature::VoiceAssistant,
@@ -728,6 +736,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::Meetings => "lab-meetings",
         Feature::VoiceFilter => "lab-voice-filter",
         Feature::VoiceAssistant => "lab-voice-assistant",
+        Feature::CompatibleRewrite => "lab-compatible-rewrite",
         Feature::Playground => "lab-playground",
         Feature::LiveText => "lab-live-text",
         Feature::LiveChapters => "lab-live-chapters",
