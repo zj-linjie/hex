@@ -2725,6 +2725,11 @@ fn goldens() {
             "modes",
             "modes-picker",
             "picker-downloading",
+            "mac-translation-word",
+            "mac-translation-phrase",
+            "mac-translation-loading",
+            "mac-translation-missing",
+            "mac-translation-error",
         ] {
             check_golden(scene, dark, PANE_SIZE);
         }

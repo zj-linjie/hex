@@ -74,6 +74,8 @@ pub(super) enum Pane {
     /// its Labs toggle is on).
     VoiceFilter,
     VoiceAssistant,
+    /// Labs › Translation (macOS): English → Simplified Chinese lookup.
+    Translation,
     /// The dictation indicator's tuning scene (Playground only).
     HudLab,
     /// Legacy event-log inspector scene (Playground only).
@@ -92,6 +94,7 @@ impl Pane {
         Pane::Annotate,
         Pane::VoiceFilter,
         Pane::VoiceAssistant,
+        Pane::Translation,
         Pane::HudLab,
         Pane::Activity,
     ];
@@ -104,6 +107,9 @@ impl Pane {
             // On from Labs (dev builds), or while its driver is installed.
             Pane::VoiceFilter => caps.fun && fun::running(ui),
             Pane::VoiceAssistant => caps.voice_assistant && ui.settings.labs.voice_assistant,
+            Pane::Translation => {
+                caps.os == super::platform::Os::Macos && ui.settings.labs.translation
+            }
             #[cfg(hex_capture)]
             Pane::Annotate => ui.platform.scrawl.is_some(),
             _ => true,
@@ -121,6 +127,7 @@ impl Pane {
             Pane::Annotate => tr("Annotate"),
             Pane::VoiceFilter => tr("Voice Filter"),
             Pane::VoiceAssistant => tr("Voice Assistant"),
+            Pane::Translation => tr("Translation"),
             Pane::HudLab => "HUD Lab",
             Pane::Activity => tr("Activity"),
         }
@@ -137,6 +144,7 @@ impl Pane {
             Pane::Annotate => "nav-annotate",
             Pane::VoiceFilter => "nav-voice-filter",
             Pane::VoiceAssistant => "nav-voice-assistant",
+            Pane::Translation => "nav-translation",
             Pane::HudLab => "nav-hud-lab",
             Pane::Activity => "nav-activity",
         }
@@ -153,6 +161,7 @@ impl Pane {
             Pane::Annotate => &SCRAWL_ICON,
             Pane::VoiceFilter => &VOICE_FILTER_ICON,
             Pane::VoiceAssistant => &VOICE_FILTER_ICON,
+            Pane::Translation => &VOICE_FILTER_ICON,
             Pane::HudLab => &HUD_LAB_ICON,
             Pane::Activity => &ACTIVITY_ICON,
         }

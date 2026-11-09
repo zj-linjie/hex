@@ -638,6 +638,26 @@ pub(super) const SCENES: &[Scene] = &[
             }],
         });
     }),
+    ("mac-translation-word", |ui| {
+        *ui = mac_fixture();
+        translation::word_scene(ui);
+    }),
+    ("mac-translation-phrase", |ui| {
+        *ui = mac_fixture();
+        translation::phrase_scene(ui);
+    }),
+    ("mac-translation-loading", |ui| {
+        *ui = mac_fixture();
+        translation::loading_scene(ui);
+    }),
+    ("mac-translation-missing", |ui| {
+        *ui = mac_fixture();
+        translation::missing_scene(ui);
+    }),
+    ("mac-translation-error", |ui| {
+        *ui = mac_fixture();
+        translation::error_scene(ui);
+    }),
     ("mac-voice-filter", |ui| {
         *ui = mac_fixture();
         ui.pane = Pane::VoiceFilter;

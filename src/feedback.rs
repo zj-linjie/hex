@@ -355,7 +355,7 @@ pub fn preload() -> Result<()> {
                     let sound = if matches!(request, Some(Request::AssistantStartStop(_))) {
                         Some(sounds.set(sound_set()).start_stop.clone())
                     } else {
-                        sounds.get(sound_set(), tone).map(|sound| sound.clone())
+                        sounds.get(sound_set(), tone).cloned()
                     };
                     if let Some(sound) = sound {
                         if let Some(epoch) = assistant_stop_epoch {

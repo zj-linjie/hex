@@ -271,8 +271,11 @@ impl Hotkeys {
                 Some(HotkeyAction::Start) if others_recording => {
                     machine.suspend();
                 }
-                Some(HotkeyAction::PasteLast | HotkeyAction::PasteMeeting)
-                    if shortcut != Shortcut::Dictation => {}
+                Some(
+                    HotkeyAction::PasteLast
+                    | HotkeyAction::PasteMeeting
+                    | HotkeyAction::Translation,
+                ) if shortcut != Shortcut::Dictation => {}
                 Some(action) => actions.push((shortcut, action)),
                 None => {}
             }
@@ -1520,8 +1523,25 @@ fn handle_hotkey_action(
             }
             emit_engine_state(events, false, worker, device)
         }
+        HotkeyAction::Translation => {
+            let capturing = dictation.is_recording();
+            let cancel = translation_cancels_capture(capturing, dictation.is_intentional());
+            if cancel {
+                // Provisional shortcut capture from the chord's modifier press.
+                feedback::retract_start();
+                dictation.cancel()?;
+            }
+            crate::rune_ui::translation::open_popup();
+            emit_engine_state(events, capturing && !cancel, worker, device)
+        }
     }?;
     Ok(true)
+}
+
+/// The translation shortcut cancels only a provisional capture. An
+/// intentional dictation keeps recording while the popup opens.
+fn translation_cancels_capture(recording: bool, intentional: bool) -> bool {
+    recording && !intentional
 }
 
 /// Ends a shortcut dictation at `action_at` and hands it to transcription.
@@ -2114,6 +2134,14 @@ mod tests {
         assert_eq!(code(Some(FinishResult::Silent)), "discarded");
         assert_eq!(code(None), "discarded");
         assert_eq!(code(Some(FinishResult::Rejected("full".into()))), "failed");
+    }
+
+    #[test]
+    fn translation_cancels_provisional_capture_and_keeps_intentional_dictation() {
+        assert!(translation_cancels_capture(true, false));
+        assert!(!translation_cancels_capture(true, true));
+        assert!(!translation_cancels_capture(false, false));
+        assert!(!translation_cancels_capture(false, true));
     }
 
     #[test]

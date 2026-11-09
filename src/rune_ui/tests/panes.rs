@@ -1858,6 +1858,87 @@ fn assistant_labs_toggle_controls_its_sidebar_item() {
 }
 
 #[test]
+fn translation_labs_toggle_controls_its_sidebar_item() {
+    let mut rt = runtime("mac-settings", true, PANE_SIZE);
+    assert!(rt.find("nav-translation").is_none());
+    tap(&mut rt, "nav-labs");
+    tap(&mut rt, "lab-translation");
+    assert!(rt.state.settings.labs.translation);
+    assert!(rt.find("nav-translation").is_some());
+}
+
+#[test]
+fn translation_word_scene_shows_headword_ipa_and_lemma_source() {
+    let rt = runtime("mac-translation-word", true, PANE_SIZE);
+    let shown = texts(&rt).join("\n");
+    assert!(shown.contains("run"), "{shown}");
+    assert!(shown.contains("/rʌn/"), "{shown}");
+    assert!(shown.contains("Local dictionary · lemma"), "{shown}");
+    assert!(rt.find("translation-speak-gb").is_some());
+    assert!(rt.find("translation-speak-us").is_some());
+}
+
+#[test]
+fn translation_phrase_scene_shows_the_chinese_line() {
+    let rt = runtime("mac-translation-phrase", true, PANE_SIZE);
+    let shown = texts(&rt).join("\n");
+    assert!(shown.contains("早上好"), "{shown}");
+    assert!(shown.contains("On-device translation"), "{shown}");
+}
+
+#[test]
+fn translation_missing_offers_install_and_online() {
+    let rt = runtime("mac-translation-missing", true, PANE_SIZE);
+    assert!(rt.find("translation-recover-install").is_some());
+    assert!(rt.find("translation-recover-online").is_some());
+    assert!(rt.find("translation-install").is_some());
+}
+
+#[test]
+fn translation_error_offers_online_only() {
+    let rt = runtime("mac-translation-error", true, PANE_SIZE);
+    assert!(rt.find("translation-recover-online").is_some());
+    assert!(rt.find("translation-recover-install").is_none());
+}
+
+#[test]
+fn translation_loading_says_looking_up() {
+    let rt = runtime("mac-translation-loading", true, PANE_SIZE);
+    let shown = texts(&rt).join("\n");
+    assert!(shown.contains("Looking up…"), "{shown}");
+}
+
+#[test]
+fn translation_submit_stays_off_for_an_empty_query() {
+    let mut rt = runtime("mac-translation-word", true, PANE_SIZE);
+    rt.state.translation.query.replace_text("");
+    rt.state.translation.fixture = Some({
+        let mut snap = rt.state.translation.fixture.clone().unwrap();
+        snap.text.clear();
+        snap.phase = crate::translation::Phase::Idle;
+        snap.outcome = None;
+        snap.error = None;
+        snap
+    });
+    refresh(&mut rt);
+    tap(&mut rt, "translation-submit");
+    assert!(rt.state.translation.query.text.is_empty());
+}
+
+#[test]
+fn translation_hotkey_recorder_opens_from_the_pane() {
+    let mut rt = runtime("mac-translation-word", true, PANE_SIZE);
+    tap(&mut rt, "translation-hotkey");
+    assert!(matches!(
+        rt.state.capture,
+        Capture::Listening {
+            target: ShortcutTarget::Translation,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn voice_filter_shows_only_while_its_labs_toggle_is_on() {
     let mut rt = runtime("mac-settings", true, PANE_SIZE);
     rt.state.settings.experimental.hex_microphone = false;

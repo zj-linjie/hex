@@ -11,7 +11,7 @@ mod human;
 use clap::{Args, Subcommand};
 
 use super::{
-    CONTROL_VERSION, AssistantAction, CaptureAction, ControlCommand, ControlReply, ControlRequest,
+    AssistantAction, CONTROL_VERSION, CaptureAction, ControlCommand, ControlReply, ControlRequest,
     ControlResponse, Pane,
 };
 

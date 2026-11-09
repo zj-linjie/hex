@@ -321,6 +321,8 @@ pub fn intentional_recording_active() -> bool {
 }
 
 static CAPTURES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static TRANSLATION_AUDIO_HOLDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// Marks a dictation capture from its press until its clip is submitted, so
 /// background work such as meeting transcription stops starting new jobs
@@ -330,14 +332,41 @@ pub struct CaptureMarker(());
 impl CaptureMarker {
     pub fn new() -> Self {
         CAPTURES.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        translation_audio_hold();
         Self(())
     }
 }
 
 impl Drop for CaptureMarker {
     fn drop(&mut self) {
+        translation_audio_release();
         CAPTURES.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
+}
+
+/// Pushes translation speech-busy from an authoritative capture or meeting
+/// sleep guard. No-ops when the lab is off or labs have not loaded, so tests
+/// and a lab-off recording never start the translation engine.
+pub(crate) fn translation_audio_hold() {
+    if TRANSLATION_AUDIO_HOLDS.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0 {
+        notify_translation_audio_busy(true);
+    }
+}
+
+pub(crate) fn translation_audio_release() {
+    if TRANSLATION_AUDIO_HOLDS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+        notify_translation_audio_busy(false);
+    }
+}
+
+fn notify_translation_audio_busy(busy: bool) {
+    if crate::labs::translation_loaded() {
+        crate::translation::set_audio_busy(busy);
+    }
+}
+
+pub(crate) fn translation_audio_hold_count() -> usize {
+    TRANSLATION_AUDIO_HOLDS.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// Whether a dictation capture has started, intentional or not, and its clip
@@ -636,6 +665,19 @@ mod tests {
     use Effect::{Mute, Pause, Sleep};
     use Event::{Held, Restored, Then};
     use RecordingAudioBehavior::{DoNothing, Mute as MuteOutput, PauseMedia};
+
+    #[test]
+    fn capture_marker_holds_and_releases_translation_audio() {
+        let before = translation_audio_hold_count();
+        let first = CaptureMarker::new();
+        assert_eq!(translation_audio_hold_count(), before + 1);
+        let second = CaptureMarker::new();
+        assert_eq!(translation_audio_hold_count(), before + 2);
+        drop(first);
+        assert_eq!(translation_audio_hold_count(), before + 1);
+        drop(second);
+        assert_eq!(translation_audio_hold_count(), before);
+    }
 
     #[test]
     fn the_browser_pauses_only_with_system_audio_granted() {

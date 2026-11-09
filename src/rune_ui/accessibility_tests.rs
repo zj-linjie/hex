@@ -144,6 +144,27 @@ fn every_control_in_every_scene_has_a_name() {
     );
 }
 
+/// Translation's query field and actions are named for screen readers.
+#[test]
+fn translation_controls_have_names() {
+    let word = runtime("mac-translation-word");
+    assert!(!name(&node(&word, "translation-query-field")).is_empty());
+    assert_eq!(name(&node(&word, "translation-submit")), "Look up");
+    assert_eq!(name(&node(&word, "translation-paste")), "Paste");
+    assert_eq!(name(&node(&word, "translation-clear")), "Clear query");
+    assert_eq!(
+        name(&node(&word, "translation-open-window")),
+        "Open translation window"
+    );
+    assert!(!name(&node(&word, "translation-speak-gb")).is_empty());
+    assert!(!name(&node(&word, "translation-speak-us")).is_empty());
+    let phrase = runtime("mac-translation-phrase");
+    assert_eq!(name(&node(&phrase, "translation-submit")), "Translate");
+    let missing = runtime("mac-translation-missing");
+    assert!(!name(&node(&missing, "translation-recover-install")).is_empty());
+    assert!(!name(&node(&missing, "translation-recover-online")).is_empty());
+}
+
 /// The window's tree starts at the pane's title, a heading.
 #[test]
 fn the_pane_title_is_its_heading() {

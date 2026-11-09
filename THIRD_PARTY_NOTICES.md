@@ -370,3 +370,42 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
+
+## ECDICT
+
+ECDICT by Lin Wei (skywind3000), MIT License. Hex downloads `ecdict.csv` and
+`lemma.en.txt` from https://github.com/skywind3000/ECDICT at git
+`39cfb9672c0906b63569e0453c2e6abfb9ab182a` only after the user installs the
+translation dictionary; the files do not ship in the app. `ecdict.mini.csv` is
+not used.
+
+Pinned artifacts (content SHA-256 of the downloaded blobs):
+
+- `ecdict.csv` 66009548 bytes, SHA-256 `d1ecbdf9ee2b920afb6b430ca6b6bb9f559588cf0dff86e04bd255f9390843cc` (git blob `0e527e22e0e0d22f012b0ed251a8dddd5891773b`)
+- `lemma.en.txt` 2318694 bytes, SHA-256 `e255b097404e3e0052060e2ddf6e15a1414f577071d63d51d2ca0ce9dacee0fc` (git blob `34eabb9f48c5867a91c01c33b206120e275f0418`)
+
+License: https://github.com/skywind3000/ECDICT/blob/39cfb9672c0906b63569e0453c2e6abfb9ab182a/LICENSE
+
+```text
+MIT License
+
+Copyright (c) 2025 Linwei
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -23,6 +23,7 @@ feedback and Run setup again.
 ```ts
 Feature             Pane  Toggle (settings.json, hex settings)   On: what it does
 ├── Voice Assistant yes labs.voice_assistant          (macOS)   Xiaozhi official voice/reply audio and the existing MCP bridge; see voice-assistant.md
+├── Translation     yes labs.translation              (macOS)   English→简体中文 lookup, phonetics, speech; pane + Control-Option-T window; see translation.md
 ├── Meetings (beta) yes   meetings.enabled             (macOS)   Meetings joins the sidebar: call detection, recording, transcripts
 ├── Voice Filter (Dev) yes experimental.hex_microphone (macOS, Linux) Voice Filter joins the sidebar; feeds the Hex Microphone (macOS driver, Linux PipeWire source)
 │                                        a stable build never feeds it; with the macOS driver installed it keeps the pane with Uninstall alone
@@ -121,7 +122,8 @@ Settings › Labs                          // labs.page, a store (labs/store.rs)
 │   └── Voice Filter while its driver is installed, or a managed or locked lab -> its switch is disabled
 ├── A lab's own settings show on its card while it's on -> Unload model when idle: Unload after (5/15/30/60 min);
 │   Screenshots: its shortcut, Saves to, and the macOS-takes-this-shortcut note with Open Keyboard Settings.
-│   Annotate 15 s replay's shortcut lives in Annotate's pane
+│   Annotate 15 s replay's shortcut lives in Annotate's pane.
+│   Translation (macOS): Translation shortcut recorder (Control-Option-T by default)
 │   // checks: unload_when_idle_shows_its_minutes_on_its_card_while_on; scenes mac-labs-settings, mac-labs-screenshots
 ├── Opened by a link (macOS) -> hex://labs opens this page; ?tab=on, ?category=<group id> and ?search=<text>
 │   set the store; hex://labs/<lab> also selects that lab's group chip (unless ?category names one). It never turns a lab on. An unknown

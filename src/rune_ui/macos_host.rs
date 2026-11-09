@@ -488,7 +488,10 @@ pub(super) fn validate_hotkey(
 ) -> Result<(), &'static str> {
     if matches!(
         target,
-        ShortcutTarget::PasteLast | ShortcutTarget::Cancel | ShortcutTarget::Screenshot
+        ShortcutTarget::PasteLast
+            | ShortcutTarget::Cancel
+            | ShortcutTarget::Screenshot
+            | ShortcutTarget::Translation
     ) && binding.key.is_none()
     {
         return Err(tr("Add a key"));
@@ -1455,6 +1458,17 @@ mod tests {
         );
         let chord = HotkeyBinding::paste_last_default();
         assert_eq!(validate_hotkey(ShortcutTarget::PasteLast, &chord), Ok(()));
+        assert_eq!(
+            validate_hotkey(ShortcutTarget::Translation, &modifiers_only),
+            Err(tr("Add a key"))
+        );
+        assert_eq!(
+            validate_hotkey(
+                ShortcutTarget::Translation,
+                &HotkeyBinding::translation_default()
+            ),
+            Ok(())
+        );
     }
 
     const LEFT_OPTION: u64 = 0x0008_0020;

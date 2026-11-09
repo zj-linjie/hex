@@ -53,6 +53,12 @@ pub fn models_dir() -> Result<PathBuf> {
     machine_local(&MODELS, "models")
 }
 
+/// Installed ECDICT files for translation (`translation::dictionary`).
+pub fn translation_dir() -> Result<PathBuf> {
+    static TRANSLATION: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    machine_local(&TRANSLATION, "translation")
+}
+
 /// `name` in the support folder, except on Windows, where logs and models
 /// belong to this computer: `%LOCALAPPDATA%\hex`, not the Roaming
 /// `%APPDATA%\hex`, which managed networks copy to a server at every sign-in.

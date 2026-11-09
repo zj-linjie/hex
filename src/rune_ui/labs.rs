@@ -39,9 +39,15 @@ pub(super) fn main_panes(ui: &Ui) -> Vec<Pane> {
         Pane::Annotate,
         Pane::VoiceFilter,
         Pane::VoiceAssistant,
+        Pane::Translation,
     ];
     #[cfg(not(hex_capture))]
-    let optional = [Pane::Meetings, Pane::VoiceFilter, Pane::VoiceAssistant];
+    let optional = [
+        Pane::Meetings,
+        Pane::VoiceFilter,
+        Pane::VoiceAssistant,
+        Pane::Translation,
+    ];
     panes.extend(optional.into_iter().filter(|pane| pane.shown(ui)));
     panes
 }
@@ -465,6 +471,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
     }
     if caps.os == super::platform::Os::Macos {
         rows.push(row(
+            Feature::Translation,
+            Some(&VOICE_FILTER_ICON),
+            tr("Translation"),
+            tr("Look up English words and phrases in Simplified Chinese, with phonetics and speech"),
+        ));
+        rows.push(row(
             Feature::MouseShortcuts,
             Some(&MOUSE),
             tr("Mouse shortcuts"),
@@ -792,6 +804,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::MoreCallApps => "lab-more-call-apps",
         Feature::AnnotateReplay => "lab-annotate-replay",
         Feature::MeetingImport => "lab-meeting-import",
+        Feature::Translation => "lab-translation",
     }
 }
 
@@ -858,6 +871,24 @@ fn extras(ui: &Ui, p: Paint, entry: &Row) -> Option<El> {
             p,
             crate::screenshots::system_takes_shortcut(),
         )),
+        Lab::Feature(Feature::Translation) => Some(
+            row()
+                .key("translation-lab-shortcut")
+                .gap(8.0)
+                .center_y()
+                .flex_wrap()
+                .child(
+                    text(tr("Translation shortcut"))
+                        .key("label")
+                        .font(controls::DESCRIPTION)
+                        .color(p.muted()),
+                )
+                .child(super::general::keys_button(
+                    ui,
+                    p,
+                    super::ShortcutTarget::Translation,
+                )),
+        ),
         _ => None,
     }
 }

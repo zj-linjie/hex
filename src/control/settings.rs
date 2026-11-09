@@ -455,6 +455,16 @@ const KEYS: &[Key] = &[
         "Labs: Xiaozhi voice assistant (macOS)",
     ),
     key(
+        "labs.translation",
+        Kind::Bool,
+        "Labs: English–Chinese lookup pane and window (macOS)",
+    ),
+    key(
+        "translation.hotkey",
+        Kind::Shortcut(HotkeySlot::Translation),
+        "Labs: the translation popup shortcut, control+option+T by default (macOS, with labs.translation)",
+    ),
+    key(
         "labs.more_call_apps",
         Kind::Bool,
         "Labs: offer to record calls in Signal, Telegram, WeChat, LINE, Webex, Element and the Phone app, and name calls on Google Voice, Messenger, Teams, FaceTime, GroupMe, and Webex pages",
@@ -801,6 +811,12 @@ fn unavailable_under(name: &str, policy: crate::policy::Policy) -> Option<Contro
             format!("`{name}` belongs to Labs › Screenshots, which only macOS has"),
         ));
     }
+    if name.starts_with("translation.") && !cfg!(target_os = "macos") {
+        return Some(ControlError::new(
+            "unsupported",
+            format!("`{name}` belongs to Labs › Translation, which only macOS has"),
+        ));
+    }
     let capability = needs(name).filter(|capability| !crate::rune_ui::capability(capability))?;
     Some(ControlError::new(
         "unsupported",
@@ -1043,6 +1059,7 @@ pub fn apply(
         | "voice_assistant.hotkey"
         | "cancel_hotkey"
         | "screenshots.hotkey"
+        | "translation.hotkey"
         | "capture.hotkey"
         | "capture.replay_hotkey" => {
             let Kind::Shortcut(slot) = key.kind else {
@@ -1056,6 +1073,7 @@ pub fn apply(
                 HotkeySlot::SecondDictation => candidate.second_dictation_hotkey.as_ref(),
                 HotkeySlot::Cancel => Some(&candidate.cancel_hotkey),
                 HotkeySlot::Screenshot => Some(&candidate.screenshots.hotkey),
+                HotkeySlot::Translation => Some(&candidate.translation.hotkey),
                 #[cfg(hex_capture)]
                 HotkeySlot::Capture => Some(&candidate.capture.hotkey),
                 #[cfg(hex_capture)]
@@ -1130,6 +1148,17 @@ pub fn apply(
             return Err(ControlError::new(
                 "shortcut-in-use",
                 "The screenshot shortcut is already in use; set screenshots.hotkey to another \
+                 shortcut first",
+            ));
+        }
+        "labs.translation"
+            if candidate.labs.translation
+                && candidate
+                    .hotkey_in_use(HotkeySlot::Translation, &candidate.translation.hotkey) =>
+        {
+            return Err(ControlError::new(
+                "shortcut-in-use",
+                "The translation shortcut is already in use; set translation.hotkey to another \
                  shortcut first",
             ));
         }
@@ -1618,6 +1647,19 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), keys().count(), "a key is listed twice");
+    }
+
+    #[test]
+    fn translation_controls_are_registered() {
+        for name in ["labs.translation", "translation.hotkey"] {
+            let entry = keys()
+                .find(|entry| entry.key == name)
+                .expect("translation setting");
+            assert!(entry.read_only.is_none(), "{name} must be editable");
+        }
+        if !cfg!(target_os = "macos") {
+            assert!(unavailable("translation.hotkey").is_some());
+        }
     }
 
     #[test]

@@ -97,6 +97,7 @@ struct State {
     captured_through: AtomicU64,
     device_name: Mutex<String>,
     recording: AtomicBool,
+    intentional: AtomicBool,
     recovering: AtomicBool,
     recognition_generation: AtomicU64,
     outstanding_recognition_frames: Arc<AtomicU64>,
@@ -293,6 +294,12 @@ impl DictationAudio {
 
     pub fn is_recording(&self) -> bool {
         self.state.recording.load(Ordering::Acquire)
+    }
+
+    /// Whether the open capture has passed the hold threshold or was marked
+    /// intentional (a `hex dictation start` has no shortcut press to judge).
+    pub fn is_intentional(&self) -> bool {
+        self.state.intentional.load(Ordering::Acquire)
     }
 
     /// Claims a ready cold-microphone start cue once for this assistant capture.
@@ -544,6 +551,7 @@ impl Owner {
             captured_through: AtomicU64::new(0),
             device_name: Mutex::new(device_name),
             recording: AtomicBool::new(false),
+            intentional: AtomicBool::new(false),
             recovering: AtomicBool::new(input.is_recovering()),
             recognition_generation: AtomicU64::new(0),
             outstanding_recognition_frames: Arc::new(AtomicU64::new(0)),
@@ -664,7 +672,7 @@ impl Owner {
                     });
                     self.input.request_open();
                 }
-                self.state.recording.store(true, Ordering::Release);
+                self.begin_recording();
                 let _ = reply.send(true);
             }
             Command::BecomeIntentional { at, reply } => {
@@ -680,6 +688,7 @@ impl Owner {
                         .assistant_start_ready
                         .store(true, Ordering::Release);
                 }
+                self.refresh_intentional();
                 let _ = reply.send(became_intentional);
             }
             Command::MarkIntentional { reply } => {
@@ -689,6 +698,7 @@ impl Owner {
                 } else {
                     self.capture.mark_intentional()
                 };
+                self.refresh_intentional();
                 let _ = reply.send(became_intentional);
             }
             Command::Finish { at, tail, reply } | Command::FinishAssistant { at, tail, reply } => {
@@ -756,7 +766,7 @@ impl Owner {
                         self.reopen_silent_stream();
                     }
                 }
-                self.state.recording.store(false, Ordering::Release);
+                self.stop_recording();
                 let _ = reply.send(finish);
                 if let Some(event) = deferred {
                     self.handle_input(event);
@@ -768,7 +778,7 @@ impl Owner {
                     self.input.cancel_open();
                 }
                 self.capture.cancel();
-                self.state.recording.store(false, Ordering::Release);
+                self.stop_recording();
                 let _ = reply.send(());
             }
             Command::SelectMicrophone { revision, device } => {
@@ -928,7 +938,7 @@ impl Owner {
                     let capture_generation = self.state.capture_generation.load(Ordering::Acquire);
                     let kept = self.keep_lost_capture(self.last_captured_through);
                     self.capture = new_capture(self.sample_rate(), &self.recording_environment);
-                    self.state.recording.store(false, Ordering::Release);
+                    self.stop_recording();
                     self.next_recognition_generation();
                     let _ = self.events.send(DictationAudioEvent::CaptureDiscontinuity {
                         was_recording,
@@ -1009,7 +1019,7 @@ impl Owner {
                 let capture_generation = self.state.capture_generation.load(Ordering::Acquire);
                 let kept = self.keep_lost_capture(lost_through);
                 self.capture.cancel();
-                self.state.recording.store(false, Ordering::Release);
+                self.stop_recording();
                 self.state.recovering.store(true, Ordering::Release);
                 let _ = self.events.send(DictationAudioEvent::Interrupted {
                     was_recording,
@@ -1047,6 +1057,7 @@ impl Owner {
                                 .assistant_start_ready
                                 .store(true, Ordering::Release);
                         }
+                        self.refresh_intentional();
                         let _ = self.events.send(DictationAudioEvent::ReadyIntentional {
                             capture_generation: self
                                 .state
@@ -1055,7 +1066,7 @@ impl Owner {
                         });
                     }
                 } else {
-                    self.state.recording.store(false, Ordering::Release);
+                    self.stop_recording();
                     if self.release_while_idle && !self.capture_sink_open() {
                         self.close_input();
                     }
@@ -1064,7 +1075,7 @@ impl Owner {
             }
             RecoveringAudioInputEvent::OpenFailed(error) => {
                 let was_recording = self.pending_capture.take().is_some();
-                self.state.recording.store(false, Ordering::Release);
+                self.stop_recording();
                 self.reconcile_input();
                 if was_recording {
                     let _ = self.events.send(DictationAudioEvent::OpenFailed {
@@ -1149,6 +1160,25 @@ impl Owner {
             self.input.request_recovery();
             self.state.recovering.store(true, Ordering::Release);
         }
+    }
+
+    fn begin_recording(&self) {
+        self.state.recording.store(true, Ordering::Release);
+        self.state.intentional.store(false, Ordering::Release);
+    }
+
+    fn stop_recording(&self) {
+        self.state.recording.store(false, Ordering::Release);
+        self.state.intentional.store(false, Ordering::Release);
+    }
+
+    fn refresh_intentional(&self) {
+        let intentional = self.capture.is_intentional()
+            || self
+                .pending_capture
+                .as_ref()
+                .is_some_and(|pending| pending.intentional_at.is_some());
+        self.state.intentional.store(intentional, Ordering::Release);
     }
 
     fn start_capture_at(&mut self, kind: CaptureKind, at: CaptureInstant) {
@@ -2550,6 +2580,40 @@ mod tests {
             pending.intentional_at,
             Some(pressed_at + crate::dictation::MINIMUM_HOLD_DURATION)
         );
+    }
+
+    #[test]
+    fn intentional_flag_tracks_hold_and_clears_when_recording_stops() {
+        let (mut owner, input, _samples) = owner_for_test(true);
+        let pressed_at = capture_time();
+        start(&mut owner, pressed_at);
+        assert!(input.is_recording());
+        assert!(!input.is_intentional());
+        control(&mut owner, |reply| Command::BecomeIntentional {
+            at: pressed_at + crate::dictation::MINIMUM_HOLD_DURATION,
+            reply,
+        });
+        assert!(input.is_intentional());
+        control(&mut owner, |reply| Command::Cancel { reply });
+        assert!(!input.is_recording());
+        assert!(!input.is_intentional());
+    }
+
+    #[test]
+    fn pending_capture_hold_counts_as_intentional_before_the_mic_opens() {
+        let (mut owner, input, _samples) = owner_for_test(false);
+        let pressed_at = capture_time();
+        start(&mut owner, pressed_at);
+        assert!(input.is_recording());
+        assert!(!input.is_intentional());
+        control(&mut owner, |reply| Command::BecomeIntentional {
+            at: pressed_at + crate::dictation::MINIMUM_HOLD_DURATION,
+            reply,
+        });
+        assert!(input.is_intentional());
+        assert!(input.is_recording());
+        control(&mut owner, |reply| Command::Cancel { reply });
+        assert!(!input.is_intentional());
     }
 
     #[cfg(hex_capture)]

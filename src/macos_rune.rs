@@ -142,6 +142,8 @@ pub(crate) enum ShortcutTarget {
     Cancel,
     /// Labs › Screenshots.
     Screenshot,
+    /// Labs › Translation popup.
+    Translation,
 }
 
 /// What the runtime last published for the window and the menu bar.
@@ -539,6 +541,7 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig, hidden: bool
     // Labs › Screenshots: its own picker and the thumbnail.
     #[cfg(hex_capture)]
     crate::screenshots::install(&mut app);
+    crate::rune_ui::translation::install_popup(&mut app);
     // `hex dictation` and `hex paste-last` go straight to the listener; the
     // rest reach the main thread's pump.
     let (pump_calls, pump_call_receiver) = mpsc::sync_channel(8);
@@ -1441,4 +1444,14 @@ fn with_window(f: impl FnOnce(&rune::AppHandle<Ui>)) {
     if let Some(window) = WINDOW.get() {
         f(window);
     }
+}
+
+/// Opens the Settings window on Labs › Translation.
+pub(crate) fn show_translation() {
+    with_window(|window| show(window, Destination::Translation));
+}
+
+/// Opens the Output pane (compatible API settings).
+pub(crate) fn show_output() {
+    with_window(|window| show(window, Destination::Modes));
 }

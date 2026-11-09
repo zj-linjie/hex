@@ -404,6 +404,7 @@ pub(super) fn conflicts(
         ShortcutTarget::SecondDictation => HotkeySlot::SecondDictation,
         #[cfg(target_os = "macos")]
         ShortcutTarget::Screenshot => HotkeySlot::Screenshot,
+        ShortcutTarget::Translation => HotkeySlot::Translation,
     };
     settings.hotkey_in_use(slot, binding)
 }
@@ -439,6 +440,7 @@ pub(super) fn binding(settings: &AppSettings, target: ShortcutTarget) -> Option<
         ShortcutTarget::SecondDictation => settings.second_dictation_hotkey.as_ref(),
         #[cfg(target_os = "macos")]
         ShortcutTarget::Screenshot => Some(&settings.screenshots.hotkey),
+        ShortcutTarget::Translation => Some(&settings.translation.hotkey),
     }
 }
 
@@ -461,6 +463,7 @@ pub(super) fn set_binding(
         ShortcutTarget::SecondDictation => settings.second_dictation_hotkey = Some(binding),
         #[cfg(target_os = "macos")]
         ShortcutTarget::Screenshot => settings.screenshots.hotkey = binding,
+        ShortcutTarget::Translation => settings.translation.hotkey = binding,
     }
 }
 
@@ -764,7 +767,10 @@ fn portal_grant(ui: &Ui, target: ShortcutTarget) -> Option<&DesktopGrantedShortc
         #[cfg(target_os = "macos")]
         ShortcutTarget::SecondDictation
         | ShortcutTarget::Assistant
-        | ShortcutTarget::Screenshot => return None,
+        | ShortcutTarget::Screenshot
+        | ShortcutTarget::Translation => return None,
+        #[cfg(not(target_os = "macos"))]
+        ShortcutTarget::Translation => return None,
     };
     granted.iter().find(|shortcut| shortcut.name == name)
 }
@@ -1217,6 +1223,7 @@ pub(super) fn hotkey_key(target: ShortcutTarget) -> &'static str {
         ShortcutTarget::Assistant => "assistant-hotkey",
         #[cfg(target_os = "macos")]
         ShortcutTarget::Screenshot => "screenshot-hotkey",
+        ShortcutTarget::Translation => "translation-hotkey",
     }
 }
 
