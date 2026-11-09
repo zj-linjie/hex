@@ -19,7 +19,7 @@ PRD: [translation-prd.md](../plans/translation-prd.md). Visual prototype:
 ```ts
 Labs > Output > Translation [off]                         // TR-01
 ├── On -> Translation joins the sidebar (macOS)
-│   ├── pane: query, Look up / Translate, speech, copy, resource row
+│   ├── pane: query, Look up / Translate, speech, copy, resource row, Open window
 │   ├── settings: Translation shortcut recorder (also on the Labs card)
 │   └── Open in Hex from the popup focuses this pane
 └── bound global shortcut -> one independent Rune window   // TR-02
@@ -37,8 +37,8 @@ guaranteed to abort on the wire.
 ```ts
 Control-Option-T (editable)                               // TR-09
 ├── Lab off, conflict, or unbound -> no match
-├── press once -> retract a provisional dictation start, cancel that
-│   capture, show/focus the same popup, focus the query
+├── press once -> retract a provisional dictation start and cancel that
+│   capture; an intentional dictation continues; show/focus the popup
 ├── already open -> focus the same window; do not create a second;
 │   do not submit; do not read the clipboard
 └── hide (Esc, red close, Lab off) -> stop speech; Hex keeps running
@@ -48,8 +48,9 @@ The popup is a normal, focusable extra Rune window in the same process
 (`540×460`, min `400×320`), not the click-through dictation HUD. Chrome is
 standard (not full-size content). Opening it makes the Dock icon visible and
 activates Hex. The main pane and popup share `crate::translation` snapshot
-state: one current query, generation, outcome, and preview. Editing in one
-surface does not move the other surface's caret while that field is focused.
+state: one current query, generation, outcome, and preview. Snapshot text
+synchronizes even in a focused field while preserving a valid selection;
+active IME preedit defers replacement.
 
 Sources: [labs.rs](../../src/labs.rs) (`Feature::Translation`,
 `labs::translation`), [group.rs](../../src/labs/group.rs) (Output),
@@ -91,8 +92,8 @@ query field                                               // TR-03
 `MAX_QUERY_CHARS = 1000`. Submit is disabled while `LocalPending` or
 `OnlinePending`. Duplicate submit of the same in-flight or already-ready
 text does not queue a second job. Clearing the field calls `edit("")` and
-`cancel`. Composition-Enter during a Chinese IME is not explicitly gated in
-the translation field; Rune `TextArea` behavior is unobserved.
+`cancel`. The field gates Enter during preedit and ignores repeated Enter;
+real IME behavior remains unobserved.
 
 Sources: [query.rs](../../src/translation/query.rs) (`normalize_submit`,
 `looks_english`), [content.rs](../../src/rune_ui/translation/content.rs)
@@ -284,7 +285,6 @@ Linux `HEX_UPDATE_GOLDENS=1 cargo test --locked --bin hex rune_ui` and
 ```ts
 LookupError.recovery
 ├── DictionaryMissing -> Install dictionary, Translate online…
-├── DictionaryMiss -> Translate online…
 ├── SystemNotReady -> Recheck, Open Language & Region, Translate online…
 ├── SystemUnsupported / SystemUnavailable -> Translate online…
 ├── CompatibleUnconfigured -> Open compatible API settings
@@ -309,8 +309,8 @@ Control-Option-T on macOS). `hex labs on|off translation`,
 dictation, assistant, Paste Last, raw/second dictation, cancel, Annotate,
 screenshots, and translation, both ways, only while the Lab is on.
 
-Voice ID and speech rate are not persisted (the PRD suggested they would be).
-That is an implemented gap, not a passing waiver.
+Voice ID and speech rate are not persisted in settings. The rate selection is
+kept in process for subsequent playback; it does not survive a restart.
 
 ## Status of proof
 
@@ -326,16 +326,28 @@ That is an implemented gap, not a passing waiver.
 | Native two-window / IME / Spaces | code | pending |
 | Merge / installed copy | — | not authorized; do not merge; do not update the installed app |
 
-Backend review-fix and independent Rune UI review were still running when this
-map was written. Do not treat this file as a passing count. Architect should
-append executed golden, native, audio, and cloud evidence after validation.
+On macOS, `cargo test --locked --offline --bin hex translation --
+--test-threads=8` at `8fb409e` completed without hanging: 64 passed and 2
+failed. The failures were the Russian catalog's missing assistant strings and
+`translation_controls_have_names`, whose query field had an empty accessible
+name. The Swift bridge passed `swiftc -typecheck src/apple_translation.swift`.
+These checks do not prove native input, audio, offline translation, or cloud use.
+The debug binary rendered all five fixture scenes in both themes on macOS,
+and all ten frames were visually inspected. They are fixture data, not proof
+of a real dictionary install or a native popup. The managed `run_project`
+preview was unavailable because this task was not visible.
+
+Independent source review did not approve the implementation: it identified a
+busy-count publication race, shortcut availability tied to dictation setup,
+resource-probe completion not waking the UI, and a global singleton config
+test concern. These require source fixes and revalidation. The Linux workflow
+for `8fb409e` was dispatched; its result and golden artifact remain pending.
 
 Known gaps versus the PRD, not hidden:
 
 - `TranslationSettings` stores only `hotkey`.
-- Popup Esc always hides the window; it does not first dismiss only the
-  online-preview card (Cancel on that card does).
-- IME composition Enter is not specially handled in `content.rs`.
+- Popup Esc cancels an online preview before hiding; active preedit takes
+  precedence. These paths have unit checks but no native IME observation.
 - The missing-dictionary fixture labels `bytes: 66_009_548` (CSV size); the
   engine's `DOWNLOAD_BYTES` is CSV + lemma.
 - System UI-less translation is macOS 26+, not macOS 15 (the PRD already
