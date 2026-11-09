@@ -20,8 +20,10 @@ use crate::translation::{
 };
 
 #[cfg(target_os = "macos")]
+pub(crate) use self::popup::install_popup;
+#[cfg(target_os = "macos")]
 pub(crate) use self::popup::wake_popup;
-pub(crate) use self::popup::{hide_popup, install_popup, open_popup};
+pub(crate) use self::popup::{hide_popup, open_popup};
 
 const PENDING_WAKE: Duration = Duration::from_millis(50);
 

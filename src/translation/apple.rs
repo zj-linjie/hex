@@ -1,4 +1,6 @@
-use super::{Accent, SpeechRate, SystemTranslationStatus, VoiceInfo};
+#[cfg(target_os = "macos")]
+use super::Accent;
+use super::{SpeechRate, SystemTranslationStatus, VoiceInfo};
 
 #[cfg(target_os = "macos")]
 use serde::Deserialize;
