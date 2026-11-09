@@ -36,7 +36,7 @@ dictation stays on its own shortcut.
 [Translation](translation.md) is the personal fork's macOS Labs opt-in
 (Output, off by default): English → Simplified Chinese lookup with dictionary
 phonetics, local speech, a pane, and Control-Option-T for an independent
-window; implementation is under validation, not merged.
+window; merged into the personal fork's `dev`, with verification limits in its map.
 [Labs](labs.md) gives every unfinished feature its own switch, off by
 default, listed under collapsible groups (Dictation, Output, History,
 Meetings, Annotate, Shortcuts, Models) with only this OS's labs.

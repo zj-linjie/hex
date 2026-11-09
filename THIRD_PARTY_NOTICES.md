@@ -381,7 +381,7 @@ not used.
 
 Pinned artifacts (content SHA-256 of the downloaded blobs):
 
-- `ecdict.csv` 66009548 bytes, SHA-256 `d1ecbdf9ee2b920afb6b430ca6b6bb9f559588cf0dff86e04bd255f9390843cc` (git blob `0e527e22e0e0d22f012b0ed251a8dddd5891773b`)
+- `ecdict.csv` 66009548 bytes, SHA-256 `d1ecbdf9ee2b920afb6f430ca6b6bb9f559588cf0dff86e04bd255f9390843cc` (git blob `0e527e22e0e0d22f012b0ed251a8dddd5891773b`)
 - `lemma.en.txt` 2318694 bytes, SHA-256 `e255b097404e3e0052060e2ddf6e15a1414f577071d63d51d2ca0ce9dacee0fc` (git blob `34eabb9f48c5867a91c01c33b206120e275f0418`)
 
 License: https://github.com/skywind3000/ECDICT/blob/39cfb9672c0906b63569e0453c2e6abfb9ab182a/LICENSE
