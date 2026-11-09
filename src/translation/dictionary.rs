@@ -15,7 +15,7 @@ use super::{DictionaryStatus, InstallProgress, InstallStage};
 
 pub const GIT: &str = "39cfb9672c0906b63569e0453c2e6abfb9ab182a";
 pub const CSV_BYTES: u64 = 66_009_548;
-pub const CSV_SHA256: &str = "d1ecbdf9ee2b920afb6b430ca6b6bb9f559588cf0dff86e04bd255f9390843cc";
+pub const CSV_SHA256: &str = "d1ecbdf9ee2b920afb6f430ca6b6bb9f559588cf0dff86e04bd255f9390843cc";
 pub const LEMMA_BYTES: u64 = 2_318_694;
 pub const LEMMA_SHA256: &str = "e255b097404e3e0052060e2ddf6e15a1414f577071d63d51d2ca0ce9dacee0fc";
 pub const DOWNLOAD_BYTES: u64 = CSV_BYTES + LEMMA_BYTES;
@@ -798,6 +798,37 @@ give,giv,,vt. 给,,d:given/p:gave,,,,,\n",
         let path = dir.join("file");
         fs::write(&path, b"hello").unwrap();
         assert!(verify_file(&path, 4, CSV_SHA256, &AtomicBool::new(false)).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn checksum_accepts_known_bytes_and_rejects_same_size_corruption() {
+        let dir = scratch();
+        let path = dir.join("file");
+        let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        let canceled = AtomicBool::new(false);
+        fs::write(&path, b"hello").unwrap();
+        verify_file(&path, 5, expected, &canceled).unwrap();
+        fs::write(&path, b"jello").unwrap();
+        let error = verify_file(&path, 5, expected, &canceled).unwrap_err();
+        assert!(error.to_string().contains("checksum mismatch"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "downloads the pinned dictionary; run explicitly for resource verification"]
+    fn pinned_dictionary_download_installs_and_loads() {
+        let dir = scratch();
+        let canceled = AtomicBool::new(false);
+        let status = install_into(&dir, |_| {}, &canceled).unwrap();
+        assert!(matches!(status, DictionaryStatus::Ready { entries } if entries > 770_000));
+        assert!(matches!(status_in(&dir), DictionaryStatus::Ready { .. }));
+        let dictionary = load_from(&dir).unwrap().unwrap();
+        let hello = dictionary.lookup("hello").unwrap();
+        assert!(hello.phonetic.is_some());
+        assert!(!hello.translation.is_empty());
+        assert_eq!(dictionary.lemma("given").as_deref(), Some("give"));
+        assert!(dictionary.lookup("hex").is_some());
         fs::remove_dir_all(dir).unwrap();
     }
 

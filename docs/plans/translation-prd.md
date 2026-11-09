@@ -198,7 +198,7 @@ Apple 文档说明 TranslationSession 使用设备上的翻译模型；安装资
 
 ### 资源准备
 
-词典由用户点击“安装词典”后才下载；支持失败后重试、原子安装和校验。钉扎 ECDICT git `39cfb9672c0906b63569e0453c2e6abfb9ab182a`：`ecdict.csv` 66009548 字节 sha256 `d1ecbdf9ee2b920afb6b430ca6b6bb9f559588cf0dff86e04bd255f9390843cc`，`lemma.en.txt` 2318694 字节 sha256 `e255b097404e3e0052060e2ddf6e15a1414f577071d63d51d2ca0ce9dacee0fc`，落到 Application Support/hex/translation。不用 `ecdict.mini.csv`。真实下载与条目加载仍待验证。
+词典由用户点击“安装词典”后才下载；支持失败后重试、原子安装和校验。钉扎 ECDICT git `39cfb9672c0906b63569e0453c2e6abfb9ab182a`：`ecdict.csv` 66009548 字节 sha256 `d1ecbdf9ee2b920afb6f430ca6b6bb9f559588cf0dff86e04bd255f9390843cc`，`lemma.en.txt` 2318694 字节 sha256 `e255b097404e3e0052060e2ddf6e15a1414f577071d63d51d2ca0ce9dacee0fc`，落到 Application Support/hex/translation。不用 `ecdict.mini.csv`。真实下载与条目加载仍待验证。
 
 系统翻译语言包和系统声音由系统管理；Hex 提供指引和重新检查，不能随关闭 Labs 删除共享系统资源。词典不按每次查询重复加载，重工作不进入 UI 或音频线程；启动 Hex 不预热本功能。
 

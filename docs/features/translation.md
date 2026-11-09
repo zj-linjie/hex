@@ -197,7 +197,7 @@ speech on a real Mac, offline synthesis.
 Application Support/hex/translation                       // TR-07
 ├── missing -> Install dictionary (user click only)
 │   ├── net::download ECDICT git 39cfb9672c0906b63569e0453c2e6abfb9ab182a
-│   │   ecdict.csv 66009548 sha256 d1ecbdf9ee2b920afb6b430ca6b6bb9f559588cf…
+│   │   ecdict.csv 66009548 sha256 d1ecbdf9ee2b920afb6f430ca6b6bb9f559588cf…
 │   │   lemma.en.txt 2318694 sha256 e255b097404e3e0052060e2ddf6e15a1414f57…
 │   ├── convert + durable write dictionary.tsv / lemma.tsv / receipt.json
 │   └── Cancel install; retry after Failed
@@ -229,9 +229,26 @@ Sources: [dictionary.rs](../../src/translation/dictionary.rs)
 [fixtures.rs](../../src/rune_ui/translation/fixtures.rs) (missing scene
 `bytes: 68_328_242`).
 
-Checks: `checksum_rejects_a_wrong_size` (dictionary.rs). Pending: a real
-pinned download, receipt verify, and offline `translate` of one word and one
-sentence. This pass did not mutate Application Support or settings.
+Checks: `checksum_rejects_a_wrong_size` and
+`checksum_accepts_known_bytes_and_rejects_same_size_corruption`
+(dictionary.rs). The opt-in
+`pinned_dictionary_download_installs_and_loads` downloads the pinned resources
+through production `net::download` into a temporary directory, verifies and
+converts them, verifies the committed receipt, and loads dictionary entries and
+lemmas. Run it explicitly with `cargo nextest run --locked --offline
+-p hex@3.3.0 --profile ci --run-ignored all translation` (Cargo's offline flag
+does not disable this test's HTTP requests).
+
+**2026-11-09 checksum correction:** the stored CSV digest had `afb6b430`
+where the pinned file has `afb6f430`. This rejected a complete download on
+every install attempt. The 66,009,548-byte download's SHA-256 was independently
+checked, and its Git blob is still
+`0e527e22e0e0d22f012b0ed251a8dddd5891773b`; the source version and integrity
+checks are unchanged. All 71 translation tests passed on macOS, including the
+explicit resource test above. It checked `hello` with phonetics, `hex`, and
+`given` → `give`; it did not write user Application Support or settings.
+Native installed-app installation and Apple sentence translation remain
+separate checks.
 
 ## Compatible API (TR-08)
 
@@ -340,9 +357,11 @@ popup, and does not survive restart.
 ## Status of proof
 
 Delivery branch: `codex/translation` in personal fork `zj-linjie/hex`.
-Source revision: `17119e5` (following `8fb409e` and `a13f07d`). Delivery is
-through a PR to `dev`; the user explicitly requested no merge. The installed
-app, user Application Support, settings, and `production` are unchanged.
+Original source revision: `17119e5` (following `8fb409e` and `a13f07d`).
+The initial request to leave delivery unmerged was superseded on 2026-11-09:
+PR #10 was merged into personal-fork `dev` as `fb2fa40`, and the local macOS
+app was built, installed and launched. `production` was not moved. The later
+dictionary checksum correction and its checks are recorded under TR-07 above.
 
 On 2026-11-09 the user explicitly ended Linux testing and golden collection
 and requested macOS delivery. Linux verification and the repository's
@@ -353,13 +372,13 @@ PNG was added to `tests/golden`; this is not a passing Linux result.
 | --- | --- | --- |
 | Labs gate, pane, popup, shortcut wiring | yes, including fallback tap | source inspection and isolated tests; no physical key / native popup |
 | Engine API, routing, generation fence, preview match | yes | Mac tests below; HTTP confirmation uses loopback |
-| ECDICT pinned install | code + notices | full app install / 770611-entry load: unverified |
+| ECDICT pinned install | code + notices | full temporary install, receipt verification, entry and lemma load passed in checksum correction; native app install separate |
 | Apple TranslationSession | Swift bridge macOS 26+ | typecheck passed; offline translate unverified |
 | AVSpeechSynthesizer en-GB/en-US | bridge + UI buttons | audible speech unverified |
 | Compatible API explicit send | preview + `generate` | real cloud send unverified |
 | Rune presentation | five `mac-translation-*` scenes | ten Mac fixture frames inspected at `8fb409e`; Linux goldens waived |
 | Native two-window / IME / Spaces | code | unverified |
-| Merge / installed copy | outside delivery | not performed |
+| Merge / installed copy | original delivery | PR #10 merged as `fb2fa40`; local macOS app built, installed and launched; physical input paths unverified |
 
 Architect-executed Mac checks:
 `cargo test --locked --offline --bin hex translation -- --test-threads=8`
