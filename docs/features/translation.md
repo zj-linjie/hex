@@ -284,7 +284,7 @@ recording and product isolation                           // TR-11
 pane + popup                                              // TR-12
 ├── shared content component; fixture scenes word/phrase/loading/missing/error
 ├── query, paste, submit, speak, recover named for accessibility
-└── goldens, light/dark, screen-edge, IPA glyph coverage: pending
+└── Mac light/dark fixtures inspected; native layout pending; Linux goldens waived
 ```
 
 Sources: [service.rs](../../src/translation/service.rs) (`invalidate`,
@@ -339,58 +339,55 @@ popup, and does not survive restart.
 
 ## Status of proof
 
-Checkout: branch `codex/translation`, committed `ff48b55` plus uncommitted
-source delta (includes `src/macos_rune/translation_shortcut.rs`). No PR.
-Do not merge. Do not update the installed app. This docs pass did not run
-tests, clippy, fmt, goldens, native UI, speech, dictionary install, or
-cloud send, and did not mutate user Application Support or settings.
+Delivery branch: `codex/translation` in personal fork `zj-linjie/hex`.
+Source revision: `17119e5` (following `8fb409e` and `a13f07d`). Delivery is
+through a PR to `dev`; the user explicitly requested no merge. The installed
+app, user Application Support, settings, and `production` are unchanged.
+
+On 2026-11-09 the user explicitly ended Linux testing and golden collection
+and requested macOS delivery. Linux verification and the repository's
+Linux-generated golden update are waived for this delivery. No translation
+PNG was added to `tests/golden`; this is not a passing Linux result.
 
 | Layer | Implemented in source | Observed |
 | --- | --- | --- |
-| Labs gate, pane, popup, shortcut wiring | yes, including fallback tap | source inspection; no physical key / native popup |
-| Engine API, routing, generation fence, preview match | yes | architect Mac tests below; not re-run here |
-| ECDICT pinned install | code + notices | download / convert / 770611-entry load: pending |
-| Apple TranslationSession | Swift bridge macOS 26+ | offline translate: pending |
-| AVSpeechSynthesizer en-GB/en-US | bridge + UI buttons | audible speech: pending |
-| Compatible API explicit send | preview + `generate` | real cloud: pending |
-| Rune goldens / Linux CI | five `mac-translation-*` scenes | no PNG in `tests/golden`; Linux run of current tree pending |
-| Native two-window / IME / Spaces | code | pending |
-| Merge / installed copy | — | no PR; not authorized |
+| Labs gate, pane, popup, shortcut wiring | yes, including fallback tap | source inspection and isolated tests; no physical key / native popup |
+| Engine API, routing, generation fence, preview match | yes | Mac tests below; HTTP confirmation uses loopback |
+| ECDICT pinned install | code + notices | full app install / 770611-entry load: unverified |
+| Apple TranslationSession | Swift bridge macOS 26+ | typecheck passed; offline translate unverified |
+| AVSpeechSynthesizer en-GB/en-US | bridge + UI buttons | audible speech unverified |
+| Compatible API explicit send | preview + `generate` | real cloud send unverified |
+| Rune presentation | five `mac-translation-*` scenes | ten Mac fixture frames inspected at `8fb409e`; Linux goldens waived |
+| Native two-window / IME / Spaces | code | unverified |
+| Merge / installed copy | outside delivery | not performed |
 
-Architect-executed on the current tree (Mac):
+Architect-executed Mac checks:
 `cargo test --locked --offline --bin hex translation -- --test-threads=8`
-→ 67 passed (includes the query a11y name and all language catalogs).
+→ 69 passed on delivery source `17119e5` (includes query accessibility, all language catalogs, and shortcut pairing).
 Separate `recording_notification_cannot_overtake_a_delayed_release` passed.
-`cargo clippy --locked --offline --bin hex --tests -- -D warnings` passed.
-fullfmt + diffcheck passed. This docs pass did not repeat those commands.
+The three `macos_rune::translation_shortcut::tests` passed, covering setup
+independence, deferred key-pair handoff, and synthetic-release isolation.
+`cargo clippy --locked --offline --bin hex --tests -- -D warnings`,
+`cargo fmt --all --check`, and `git diff --check` passed. Swift typecheck
+and a Mac debug build also passed during integration.
 
-Earlier at `8fb409e`: the same translation filter was 64 passed / 2 failed
-(Russian assistant catalog strings; empty query accessible name). Current
-source adds the Russian strings and the query `.label`. Ten fixture frames
-(five `mac-translation-*` scenes × light/dark) were visually inspected on
-that `8fb409e` debug binary. They are fixture data, not a native popup or
-a real dictionary. They are not a visual check of the current tree.
+Earlier at `8fb409e`, the translation filter had two failures (Russian
+assistant catalog strings and the query accessible name); both were fixed.
+Ten fixture frames (five scenes × light/dark) were inspected on that debug
+binary. They are fixture data, not a native popup or a real dictionary.
 
-Review defects recorded at `8fb409e` are implemented in the current delta:
-`AudioHolds` serializes hold-count with notification; `bump` calls
-`notify_changed` → `wake_translation` on main + popup; fallback
-`translation_shortcut` tap while the dictation listener is down;
-`engine_config` is a pure function (the compatible-lab-off test no longer
-touches the process singleton); query outer a11y label; twenty Russian
-assistant strings. Final targeted review of those fixes is pending. Do not
-treat the implementation as review-approved.
+Review findings about audio hold publication, resource wakeups, setup-time
+shortcut availability, and singleton test isolation were corrected. Fresh
+targeted reviews approved the final shortcut key-pair correction and the
+three-file compatibility correction. These source reviews do not establish
+physical shortcut, native audio, or real IME behavior.
 
-Linux CI for `8fb409e`:
-[Check Linux run 42584100136](https://github.com/zj-linjie/hex/actions/runs/42584100136)
-(`workflow_dispatch`, branch `codex/translation`). Test job
-[compile failed](https://github.com/zj-linjie/hex/actions/runs/42584100136/job/129049648650)
-on mac-only `audio::recording_environment` from `translation/service.rs` and
-unmatched `ShortcutTarget::Assistant` in `rune_ui/settings.rs`. Nix job
-[failed on the same compile](https://github.com/zj-linjie/hex/actions/runs/42584100136/job/129049648368)
-(still running at architect inspection; completed failure when this docs
-pass read the run). No artifacts, no goldens. Current uncommitted source
-contains those compile-error fixes. No Linux run of the current tree;
-final CI pending.
+Historical Linux attempts at `8fb409e` and `a13f07d` encountered compile
+errors. Those errors were corrected in the delivery source, but Linux
+success is not claimed. The remaining task runs
+[42587268210](https://github.com/zj-linjie/hex/actions/runs/42587268210) and
+[42588064058](https://github.com/zj-linjie/hex/actions/runs/42588064058) were
+cancelled at the user's request; no further Linux work is part of delivery.
 
 Known gaps versus the PRD, not hidden:
 
