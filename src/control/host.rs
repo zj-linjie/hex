@@ -143,6 +143,9 @@ fn command(host: &dyn Host, command: ControlCommand) -> ControlReply {
                     .map(|()| ControlReply::done(dictation_message(action)))
             }))
         }
+        ControlCommand::Assistant { .. } => {
+            unsupported("Voice assistant is available on macOS only")
+        }
         ControlCommand::PasteLast => reply(
             host.paste_last()
                 .map(|()| ControlReply::done("Pasting the last dictation")),
@@ -754,6 +757,9 @@ mod tests {
     fn what_this_os_cannot_do_is_unsupported_at_runtime() {
         let host = FakeHost::default();
         for command in [
+            ControlCommand::Assistant {
+                action: crate::control::AssistantAction::Start,
+            },
             ControlCommand::LaunchAtLogin { enabled: None },
             ControlCommand::ScrawlCaptureUndo,
             ControlCommand::WindowStory {

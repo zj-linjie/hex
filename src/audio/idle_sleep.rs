@@ -12,6 +12,8 @@ static HELD: AtomicUsize = AtomicUsize::new(0);
 /// Prevents idle sleep until dropped. When the OS refuses (logged), the
 /// guard still counts as Hex recording ([`held`]).
 pub fn prevent_sleep() -> Option<PreventSleep> {
+    #[cfg(target_os = "macos")]
+    crate::audio::recording_environment::translation_audio_hold();
     let platform = match platform::PreventSleep::start() {
         Ok(prevention) => Some(prevention),
         Err(error) => {
@@ -39,6 +41,8 @@ pub struct PreventSleep {
 impl Drop for PreventSleep {
     fn drop(&mut self) {
         HELD.fetch_sub(1, Ordering::AcqRel);
+        #[cfg(target_os = "macos")]
+        crate::audio::recording_environment::translation_audio_release();
     }
 }
 

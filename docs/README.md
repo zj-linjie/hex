@@ -38,6 +38,9 @@ override shipped behavior.
 
 ## Architecture Decisions And Active Plans
 
+- [`plans/translation-prd.md`](plans/translation-prd.md): draft for the personal
+  fork's macOS English-to-Chinese dictionary and short-sentence translation,
+  local pronunciation, phonetics, and independent shortcut window; not implemented.
 - [`plans/rune-ui.md`](plans/rune-ui.md): implemented; Rune desktop UI port,
   surfaces, goldens, and remaining real-window checklist.
 - [`plans/single-process.md`](plans/single-process.md): implemented; one Hex

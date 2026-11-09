@@ -61,6 +61,8 @@ pub(crate) enum ShortcutTarget {
     RawDictation,
     /// Toggle mode's cancel shortcut.
     Cancel,
+    /// Labs › Translation (macOS recorder in shared UI fixtures).
+    Translation,
 }
 
 struct PreparedTranscription {
@@ -1160,6 +1162,7 @@ impl LinuxDesktopHost {
                             settings.raw_dictation_hotkey = Some(binding)
                         }
                         ShortcutTarget::Cancel => settings.cancel_hotkey = binding,
+                        ShortcutTarget::Translation => settings.translation.hotkey = binding,
                     }
                 })
             }));

@@ -89,6 +89,8 @@ pub struct LabsSettings {
     pub follow_live_transcript: bool,
     /// Meetings offers Import audio…: a local audio file becomes a meeting (macOS).
     pub meeting_import: bool,
+    /// English→Simplified Chinese lookup in its own pane and window (macOS).
+    pub translation: bool,
     /// With `labs.annotate_replay` on, keeps a rolling 15 s display buffer via `SCClipBufferingOutput` (macOS 27+).
     pub annotate_replay: bool,
     /// Calls in more apps (Signal, Telegram, WeChat, LINE, Webex, Element, Phone) and on more websites are offered and named.
@@ -153,6 +155,7 @@ impl Default for LabsSettings {
             screenshots: false,
             follow_live_transcript: false,
             meeting_import: false,
+            translation: false,
             groups: std::collections::BTreeMap::new(),
         }
     }

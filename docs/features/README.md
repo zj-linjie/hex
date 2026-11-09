@@ -33,6 +33,10 @@ Agents can [read retained transcripts](transcript-cli.md) and
 [Voice assistant](voice-assistant.md) is the personal fork's macOS Labs
 opt-in: right Option talks to Xiaozhi and its existing MCP bridge; local
 dictation stays on its own shortcut.
+[Translation](translation.md) is the personal fork's macOS Labs opt-in
+(Output, off by default): English → Simplified Chinese lookup with dictionary
+phonetics, local speech, a pane, and Control-Option-T for an independent
+window; implementation is under validation, not merged.
 [Labs](labs.md) gives every unfinished feature its own switch, off by
 default, listed under collapsible groups (Dictation, Output, History,
 Meetings, Annotate, Shortcuts, Models) with only this OS's labs.

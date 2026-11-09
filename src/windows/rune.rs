@@ -93,6 +93,8 @@ pub(crate) enum ShortcutTarget {
     RawDictation,
     /// Toggle mode's cancel shortcut.
     Cancel,
+    /// Labs › Translation (macOS recorder in shared UI fixtures).
+    Translation,
 }
 
 /// What the runtime last published for the window.

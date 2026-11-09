@@ -1050,6 +1050,12 @@ fn paste_action(input: InputEvent, hotkeys: RuntimeHotkeys) -> Option<HotkeyActi
                 .filter(|binding| binding.matches_key_press(code, flags))
                 .map(|_| HotkeyAction::PasteMeeting)
         })
+        .or_else(|| {
+            hotkeys
+                .translation
+                .filter(|binding| binding.matches_key_press(code, flags))
+                .map(|_| HotkeyAction::Translation)
+        })
 }
 
 #[cfg(test)]
@@ -1068,4 +1074,31 @@ fn paste_action_with_meetings(
         binding
     });
     paste_action(input, hotkeys)
+}
+
+#[cfg(test)]
+mod translation_hotkey_tests {
+    use super::*;
+    use crate::app_settings::{CONTROL_KEY_MASK, HotkeyBinding, OPTION_KEY_MASK};
+
+    #[test]
+    fn control_option_t_opens_translation_and_not_paste() {
+        let mut hotkeys = RuntimeHotkeys {
+            paste_last: None,
+            paste_meeting: None,
+            ..Default::default()
+        };
+        let mut translation = HotkeyBinding::translation_default().runtime();
+        translation.key_code = Some(17);
+        hotkeys.translation = Some(translation);
+        let action = paste_action(
+            InputEvent::Key {
+                code: 17,
+                down: true,
+                flags: CONTROL_KEY_MASK | OPTION_KEY_MASK,
+            },
+            hotkeys,
+        );
+        assert_eq!(action, Some(HotkeyAction::Translation));
+    }
 }

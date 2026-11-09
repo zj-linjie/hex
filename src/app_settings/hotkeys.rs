@@ -737,6 +737,22 @@ impl HotkeyBinding {
         binding
     }
 
+    /// Control-Option-T on macOS; Ctrl+Alt+T elsewhere. Opens the
+    /// translation popup once.
+    pub fn translation_default() -> Self {
+        #[cfg(target_os = "macos")]
+        let binding = Self {
+            modifiers: HotkeyModifiers::control_option(),
+            key: Some(HotkeyKey {
+                code: layout_key_code('t').unwrap_or(17),
+                label: "T".into(),
+            }),
+        };
+        #[cfg(not(target_os = "macos"))]
+        let binding = Self::chord(HotkeyModifiers::control_option(), "t");
+        binding
+    }
+
     /// Escape, with no modifier.
     pub fn cancel_default() -> Self {
         #[cfg(target_os = "macos")]
@@ -1111,11 +1127,13 @@ pub struct RuntimeHotkeys {
     /// Toggle mode's cancel shortcut. Not among [`RuntimeHotkeys::all`]:
     /// Hex takes it only while a toggled recording runs.
     pub cancel: Option<RuntimeHotkey>,
+    /// Labs › Translation (macOS), while it is on and bound.
+    pub translation: Option<RuntimeHotkey>,
 }
 
 impl RuntimeHotkeys {
     /// Every shortcut Hex matches, for suppression and chord evidence.
-    pub fn all(self) -> [Option<RuntimeHotkey>; 8] {
+    pub fn all(self) -> [Option<RuntimeHotkey>; 9] {
         [
             self.assistant,
             Some(self.dictation),
@@ -1125,6 +1143,7 @@ impl RuntimeHotkeys {
             self.capture_replay,
             self.raw_dictation,
             self.second_dictation,
+            self.translation,
         ]
     }
 }
@@ -1142,6 +1161,7 @@ impl Default for RuntimeHotkeys {
             raw_dictation: None,
             second_dictation: None,
             cancel: None,
+            translation: None,
         }
     }
 }

@@ -117,10 +117,11 @@ pub enum Feature {
     MoreCallApps,
     AnnotateReplay,
     MeetingImport,
+    Translation,
 }
 
 impl Feature {
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 54] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::VoiceAssistant,
@@ -174,6 +175,7 @@ impl Feature {
         Self::MoreCallApps,
         Self::AnnotateReplay,
         Self::MeetingImport,
+        Self::Translation,
     ];
 
     /// The features this OS and build have.
@@ -251,6 +253,7 @@ impl Feature {
             | Self::MoreCallApps
             | Self::AnnotateReplay
             | Self::MeetingImport
+            | Self::Translation
             | Self::NotchIndicator => Audience::Everyone,
         }
     }
@@ -311,6 +314,7 @@ impl Feature {
             | Self::MeetingImport
             | Self::CompatibleRewrite => 20261106,
             Self::SkipShortDeepseek => 20261108,
+            Self::Translation => 20261109,
         }
     }
 
@@ -369,7 +373,8 @@ impl Feature {
             | Self::RecentDictations
             | Self::HideMenuBarIcon
             | Self::NotchIndicator
-            | Self::Screenshots => cfg!(target_os = "macos"),
+            | Self::Screenshots
+            | Self::Translation => cfg!(target_os = "macos"),
             Self::TapOrHold => cfg!(any(target_os = "macos", target_os = "linux")),
             Self::KeyboardModelSwitching => crate::keyboard_input_sources::available(),
             Self::AnnotateReplay => {
@@ -463,6 +468,7 @@ impl Feature {
             Self::MoreCallApps => "more-call-apps",
             Self::AnnotateReplay => "annotate-replay",
             Self::MeetingImport => "meeting-import",
+            Self::Translation => "translation",
         }
     }
 
@@ -522,6 +528,7 @@ impl Feature {
             Self::MoreCallApps => "labs.more_call_apps",
             Self::AnnotateReplay => "labs.annotate_replay",
             Self::MeetingImport => "labs.meeting_import",
+            Self::Translation => "labs.translation",
         }
     }
 
@@ -661,6 +668,9 @@ impl Feature {
             Self::MeetingImport => {
                 "Import an audio file into Meetings and transcribe it on this Mac"
             }
+            Self::Translation => {
+                "Look up English words and phrases in Simplified Chinese, with phonetics and speech (its own pane and window, macOS)"
+            }
         }
     }
 
@@ -724,6 +734,7 @@ impl Feature {
             Self::MoreCallApps => settings.labs.more_call_apps,
             Self::AnnotateReplay => settings.labs.annotate_replay,
             Self::MeetingImport => settings.labs.meeting_import,
+            Self::Translation => settings.labs.translation,
         }
     }
 
@@ -785,6 +796,7 @@ impl Feature {
             &mut labs.more_call_apps,
             &mut labs.annotate_replay,
             &mut labs.meeting_import,
+            &mut labs.translation,
         ]
     }
 
@@ -851,6 +863,7 @@ impl Feature {
             Self::MoreCallApps => settings.labs.more_call_apps = on,
             Self::AnnotateReplay => settings.labs.annotate_replay = on,
             Self::MeetingImport => settings.labs.meeting_import = on,
+            Self::Translation => settings.labs.translation = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
@@ -906,6 +919,7 @@ const MINUTES_MASK: u64 = (1 << MINUTES_BITS) - 1;
 /// Bits 1..31 are full, so this switch sits above the minutes.
 const MEETING_IMPORT: u64 = 1 << (MINUTES_SHIFT + MINUTES_BITS as u64);
 const SKIP_SHORT_DEEPSEEK: u64 = 1 << (MINUTES_SHIFT + MINUTES_BITS as u64 + 1);
+const TRANSLATION: u64 = 1 << (MINUTES_SHIFT + MINUTES_BITS as u64 + 2);
 
 /// This process's `labs` switches: unknown until settings load or one is
 /// first read.
@@ -1135,6 +1149,22 @@ pub(crate) fn skip_short_deepseek() -> bool {
     on(SKIP_SHORT_DEEPSEEK) && Feature::SkipShortDeepseek.on_this_os()
 }
 
+/// English→Simplified Chinese lookup in its own pane and window (macOS;
+/// read where the pane, popup, and shortcut start).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn translation() -> bool {
+    on(TRANSLATION) && Feature::Translation.on_this_os()
+}
+
+/// Whether this process already loaded labs and Translation is on. Does not
+/// read saved settings or start the translation engine: recording owners use
+/// this so a lab-off capture never initializes translation work.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn translation_loaded() -> bool {
+    let state = STATE.load(Ordering::Acquire);
+    state != 0 && state & TRANSLATION != 0 && Feature::Translation.on_this_os()
+}
+
 /// How long the speech model may sit unused before the engine unloads it,
 /// while Labs › Unload model when idle is on.
 pub fn unload_idle() -> Option<std::time::Duration> {
@@ -1281,6 +1311,7 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
             GNOME_MEETING_CAPSULES,
         ),
         (Feature::Screenshots, settings.screenshots, SCREENSHOTS),
+        (Feature::Translation, settings.translation, TRANSLATION),
     ]
     .into_iter()
     .filter(|(feature, on, _)| *on && reaches(*feature))
@@ -1742,6 +1773,18 @@ mod tests {
         assert_ne!(state & SCREENSHOTS, 0);
         assert_eq!(state & MEETING_FINISHED_EVENT, 0);
         assert_eq!(state >> MINUTES_SHIFT, 24 * 60);
+    }
+
+    #[test]
+    fn translation_is_its_own_bit_and_off_by_default() {
+        let mut labs = LabsSettings::default();
+        assert_eq!(encode_where(&labs, |_| true) & TRANSLATION, 0);
+        labs.translation = true;
+        labs.unload_idle_minutes = 24 * 60;
+        let state = encode_where(&labs, |_| true);
+        assert_ne!(state & TRANSLATION, 0);
+        assert_eq!(state & SKIP_SHORT_DEEPSEEK, 0);
+        assert_eq!((state >> MINUTES_SHIFT) & MINUTES_MASK, 24 * 60);
     }
 
     #[test]

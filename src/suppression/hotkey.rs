@@ -14,6 +14,8 @@ pub enum HotkeyAction {
     CancelShortcut,
     PasteLast,
     PasteMeeting,
+    /// Labs › Translation: press once to open the popup.
+    Translation,
 }
 
 impl HotkeyAction {

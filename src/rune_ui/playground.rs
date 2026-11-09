@@ -212,6 +212,14 @@ const PATHS: &[(&str, &str)] = &[
         "Window/Voice Assistant/Needs identity",
     ),
     ("mac-assistant-reply", "Window/Voice Assistant/Reply"),
+    ("mac-translation-word", "Window/Translation/Word"),
+    ("mac-translation-phrase", "Window/Translation/Phrase"),
+    ("mac-translation-loading", "Window/Translation/Looking up"),
+    (
+        "mac-translation-missing",
+        "Window/Translation/Dictionary missing",
+    ),
+    ("mac-translation-error", "Window/Translation/Error"),
     ("mac-voice-filter", "Window/Voice Filter/Voice Filter"),
     ("mac-voice-filter-muted", "Window/Voice Filter/Muted"),
     (

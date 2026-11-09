@@ -15,7 +15,7 @@ pub(super) fn enabled() -> bool {
 }
 
 /// Read a private JSON credential without ever persisting its contents in settings.
-pub(super) fn credential(path: &str, base: &str) -> Result<Option<String>> {
+pub(crate) fn credential(path: &str, base: &str) -> Result<Option<String>> {
     if path.trim().is_empty() {
         return Ok(None);
     }
@@ -167,7 +167,7 @@ pub(crate) fn models(base: &str, key_path: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-pub(super) fn generate(
+pub(crate) fn generate(
     base: &str,
     model: &str,
     key: Option<&str>,

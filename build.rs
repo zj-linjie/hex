@@ -53,6 +53,10 @@ fn main() {
     compile_swift_bridge("apple_speech", "HEXAppleSpeechBridge", &[]);
     println!("cargo:rustc-link-lib=framework=AVFAudio");
     println!("cargo:rustc-link-lib=framework=Speech");
+    // Translation exists on macOS 15; the UI-less installedSource session is
+    // macOS 26+. Strong-link the framework so the bridge can probe versions.
+    compile_swift_bridge("apple_translation", "HEXAppleTranslationBridge", &[]);
+    println!("cargo:rustc-link-lib=framework=Translation");
     // AVFoundation decodes an imported meeting's audio into a 16 kHz WAV.
     compile_swift_bridge("meeting_import", "HEXMeetingImportBridge", &[]);
     println!("cargo:rustc-link-lib=framework=AudioToolbox");

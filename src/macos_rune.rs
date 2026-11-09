@@ -64,6 +64,7 @@ mod control;
 mod launch;
 mod main_menu;
 pub(crate) mod status_item;
+mod translation_shortcut;
 mod wake;
 
 use activation::{observe_activation, reopen_on_activation};
@@ -142,6 +143,8 @@ pub(crate) enum ShortcutTarget {
     Cancel,
     /// Labs › Screenshots.
     Screenshot,
+    /// Labs › Translation popup.
+    Translation,
 }
 
 /// What the runtime last published for the window and the menu bar.
@@ -539,6 +542,7 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig, hidden: bool
     // Labs › Screenshots: its own picker and the thumbnail.
     #[cfg(hex_capture)]
     crate::screenshots::install(&mut app);
+    crate::rune_ui::translation::install_popup(&mut app);
     // `hex dictation` and `hex paste-last` go straight to the listener; the
     // rest reach the main thread's pump.
     let (pump_calls, pump_call_receiver) = mpsc::sync_channel(8);
@@ -1055,6 +1059,10 @@ fn bring_forward(window: &rune::AppHandle<Ui>) {
 
 impl Pump {
     fn tick(&mut self, indicator: &mut DictationIndicatorUi) {
+        if let Some(published) = self.runtime.published() {
+            translation_shortcut::sync(&published.settings, published.listener.running);
+        }
+
         if self.shutdown.load(Ordering::Relaxed) {
             self.runtime_cancel();
             self.window.quit();
@@ -1432,6 +1440,14 @@ impl MenuTarget {
     }
 }
 
+/// Service callbacks only enqueue redraws; they never wait for the UI.
+pub(crate) fn wake_translation() {
+    if let Some(window) = WINDOW.get() {
+        window.wake();
+    }
+    crate::rune_ui::translation::wake_popup();
+}
+
 /// Runs `f` on the AppKit main thread through the window's event loop.
 pub(crate) fn on_main_thread(f: impl FnOnce() + Send + 'static) {
     with_window(|window| window.update(move |_, _| f()));
@@ -1441,4 +1457,14 @@ fn with_window(f: impl FnOnce(&rune::AppHandle<Ui>)) {
     if let Some(window) = WINDOW.get() {
         f(window);
     }
+}
+
+/// Opens the Settings window on Labs › Translation.
+pub(crate) fn show_translation() {
+    with_window(|window| show(window, Destination::Translation));
+}
+
+/// Opens the Output pane (compatible API settings).
+pub(crate) fn show_output() {
+    with_window(|window| show(window, Destination::Modes));
 }

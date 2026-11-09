@@ -64,6 +64,7 @@ mod sound_sets;
 mod spark;
 #[cfg(target_os = "macos")]
 pub(crate) mod story_link;
+pub(crate) mod translation;
 mod vocabulary;
 mod voice_assistant;
 
@@ -386,6 +387,8 @@ pub(crate) enum Destination {
     Meetings(Option<String>),
     Modes,
     History,
+    /// Labs › Translation (macOS).
+    Translation,
 }
 
 /// Where `hex window show` opens the window. While Meetings is off, its
@@ -409,6 +412,7 @@ pub(crate) fn show(ui: &mut Ui, destination: Destination, tx: &mut Tx) {
         Destination::Meetings(_) => Pane::Meetings,
         Destination::Modes => Pane::Output,
         Destination::History => Pane::History,
+        Destination::Translation => Pane::Translation,
     };
     picker::close(ui);
     explainer::close(ui);
@@ -484,6 +488,7 @@ pub(crate) fn shortcut_rule(
         HotkeySlot::SecondDictation => ShortcutTarget::SecondDictation,
         #[cfg(target_os = "macos")]
         HotkeySlot::Screenshot => ShortcutTarget::Screenshot,
+        HotkeySlot::Translation => ShortcutTarget::Translation,
         // Labs › Second dictation shortcut and Screenshots are macOS's;
         // elsewhere a saved one meets the dictation shortcut's rules.
         #[cfg(not(target_os = "macos"))]
@@ -728,6 +733,7 @@ pub(crate) struct Ui {
     meetings: meetings::MeetingsPane,
     fun: fun::FunPane,
     assistant: voice_assistant::AssistantPane,
+    translation: translation::TranslationPane,
     activity: activity::ActivityPane,
     /// HUD Lab's preset was copied since it last changed.
     hud_copied: bool,
@@ -840,6 +846,7 @@ impl Ui {
             meetings: meetings::MeetingsPane::default(),
             fun: fun::FunPane::default(),
             assistant: voice_assistant::AssistantPane::default(),
+            translation: translation::TranslationPane::default(),
             activity: activity::ActivityPane::default(),
             hud_copied: false,
             hud_saved: false,
@@ -1294,6 +1301,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     changed |= ui.modes.poll(ui.live());
     changed |= modes::poll_chooser(ui);
     changed |= voice_assistant::poll(ui);
+    changed |= translation::poll(ui, tx);
     changed |= model_import::poll(ui);
     changed |= meetings::poll_import(ui);
     changed |= found::poll(ui);
@@ -1401,6 +1409,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         Pane::Annotate => (Vec::new(), scrawl::pane(ui, p, &mut layer)),
         Pane::VoiceFilter => (Vec::new(), fun::pane(ui, p)),
         Pane::VoiceAssistant => (Vec::new(), voice_assistant::pane(ui, p)),
+        Pane::Translation => (Vec::new(), translation::pane(ui, p)),
         Pane::HudLab => hud_lab::pane(ui, p),
         Pane::Activity => activity::pane(ui, p),
     };
@@ -1484,7 +1493,7 @@ const SCROLL_FADE: (f32, f32) = (4.0, 24.0);
 /// sits clear of the fades, so the first and last borders, rings, and fills
 /// are never cut; content needing room beside the edges (bordered cards)
 /// pads itself horizontally.
-fn scroll_body(k: &rune_kit::Kit, key: &str, content: El) -> El {
+pub(super) fn scroll_body(k: &rune_kit::Kit, key: &str, content: El) -> El {
     faded_body(k, key, content, SCROLL_FADE)
 }
 

@@ -28,6 +28,19 @@ and [implementation record](docs/plans/voice-assistant-implementation.md)
 for delivered behavior and observed verification. Native checks remain explicit;
 fixtures do not establish microphone-to-tool execution.
 
+## Translation For The Personal Fork
+
+The [translation PRD](docs/plans/translation-prd.md) and
+[feature map](docs/features/translation.md) describe a macOS-only,
+off-by-default Labs feature (Output, Everyone) for English words and short
+sentences: Chinese meanings, dictionary phonetics, local speech, a dedicated
+Rune pane and an independent window opened by Control-Option-T. Local
+dictionary and system translation resources come first; online fallback
+requires an explicit compatible-API send. Implementation is under validation
+in the personal-fork checkout; goldens, native window/speech, ECDICT install,
+and cloud sends are pending. Do not merge this slice or update the installed
+copy from these docs.
+
 ## Validate The Rune Desktop App
 
 The window, menu-bar and tray hosts, HUDs, meeting capsules, and onboarding now

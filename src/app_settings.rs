@@ -25,6 +25,7 @@ mod meetings;
 mod persistence;
 mod screenshots;
 mod shortcut_repair;
+mod translation;
 mod voice_assistant;
 
 pub use voice_assistant::VoiceAssistantSettings;
@@ -42,6 +43,7 @@ pub use meeting_folder::default_meeting_output_folder;
 pub use meetings::*;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 pub use screenshots::{ScreenshotSettings, screenshot_hotkey, screenshot_settings};
+pub use translation::TranslationSettings;
 
 static RECORDING_DUCK_VOLUME: AtomicU32 = AtomicU32::new(0.2_f32.to_bits());
 // Until settings load, "While dictating" is its default, not Mute: the
@@ -309,6 +311,8 @@ pub struct AppSettings {
     pub labs: LabsSettings,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
+    /// Labs › Translation's shortcut (macOS).
+    pub translation: TranslationSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
     /// listener can be off).
     pub enable_on_launch: bool,
@@ -435,6 +439,7 @@ impl Default for AppSettings {
             experimental: ExperimentalSettings::default(),
             labs: LabsSettings::default(),
             screenshots: ScreenshotSettings::default(),
+            translation: TranslationSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,
             gnome_keyboard_shortcuts: false,
@@ -769,6 +774,7 @@ impl AppSettings {
         );
         crate::labs::apply(&self.labs);
         screenshots::apply_screenshots(self);
+        translation::apply_translation(self);
         #[cfg(hex_capture)]
         {
             *CAPTURE_SETTINGS
@@ -1017,6 +1023,7 @@ impl AppSettings {
                 .active_second_dictation_hotkey()
                 .map(HotkeyBinding::runtime),
             cancel: self.active_cancel_hotkey().map(HotkeyBinding::runtime),
+            translation: self.active_translation_hotkey().map(HotkeyBinding::runtime),
         }
     }
 
@@ -1103,6 +1110,10 @@ impl AppSettings {
             tracing::warn!("cleared a left-click second dictation shortcut");
             self.second_dictation_hotkey = None;
         }
+        if self.translation.hotkey.is_bare_primary_click() {
+            tracing::warn!("replaced a left-click translation shortcut with the default");
+            self.translation.hotkey = HotkeyBinding::translation_default();
+        }
         #[cfg(hex_capture)]
         if self.capture.hotkey.is_bare_primary_click() {
             tracing::warn!("replaced a left-click capture shortcut with the default");
@@ -1148,6 +1159,8 @@ pub enum HotkeySlot {
     Cancel,
     /// Labs › Screenshots (macOS).
     Screenshot,
+    /// Labs › Translation (macOS).
+    Translation,
 }
 
 impl AppSettings {
@@ -1201,6 +1214,9 @@ impl AppSettings {
         }
         if slot != HotkeySlot::Screenshot && cfg!(target_os = "macos") && self.labs.screenshots {
             others.push(self.screenshots.hotkey.clone());
+        }
+        if slot != HotkeySlot::Translation && cfg!(target_os = "macos") && self.labs.translation {
+            others.push(self.translation.hotkey.clone());
         }
         hotkey_conflicts(binding, others)
     }
