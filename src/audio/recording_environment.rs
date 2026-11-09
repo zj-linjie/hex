@@ -321,8 +321,35 @@ pub fn intentional_recording_active() -> bool {
 }
 
 static CAPTURES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static TRANSLATION_AUDIO_HOLDS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static TRANSLATION_AUDIO_HOLDS: AudioHolds = AudioHolds::new();
+
+/// Serializes count transitions with their notification so a delayed release
+/// cannot publish idle after another owner has already started recording.
+struct AudioHolds {
+    count: std::sync::atomic::AtomicUsize,
+    publication: Mutex<()>,
+}
+
+impl AudioHolds {
+    const fn new() -> Self {
+        Self {
+            count: std::sync::atomic::AtomicUsize::new(0),
+            publication: Mutex::new(()),
+        }
+    }
+
+    fn change(&self, acquire: bool, notify: impl FnOnce(bool)) {
+        let _publication = self.publication.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = if acquire {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        } else {
+            self.count.fetch_sub(1, std::sync::atomic::Ordering::AcqRel)
+        };
+        if (acquire && previous == 0) || (!acquire && previous == 1) {
+            notify(acquire);
+        }
+    }
+}
 
 /// Marks a dictation capture from its press until its clip is submitted, so
 /// background work such as meeting transcription stops starting new jobs
@@ -348,15 +375,11 @@ impl Drop for CaptureMarker {
 /// sleep guard. No-ops when the lab is off or labs have not loaded, so tests
 /// and a lab-off recording never start the translation engine.
 pub(crate) fn translation_audio_hold() {
-    if TRANSLATION_AUDIO_HOLDS.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0 {
-        notify_translation_audio_busy(true);
-    }
+    TRANSLATION_AUDIO_HOLDS.change(true, notify_translation_audio_busy);
 }
 
 pub(crate) fn translation_audio_release() {
-    if TRANSLATION_AUDIO_HOLDS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
-        notify_translation_audio_busy(false);
-    }
+    TRANSLATION_AUDIO_HOLDS.change(false, notify_translation_audio_busy);
 }
 
 fn notify_translation_audio_busy(busy: bool) {
@@ -366,7 +389,9 @@ fn notify_translation_audio_busy(busy: bool) {
 }
 
 pub(crate) fn translation_audio_hold_count() -> usize {
-    TRANSLATION_AUDIO_HOLDS.load(std::sync::atomic::Ordering::Acquire)
+    TRANSLATION_AUDIO_HOLDS
+        .count
+        .load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// Whether a dictation capture has started, intentional or not, and its clip
@@ -665,6 +690,38 @@ mod tests {
     use Effect::{Mute, Pause, Sleep};
     use Event::{Held, Restored, Then};
     use RecordingAudioBehavior::{DoNothing, Mute as MuteOutput, PauseMedia};
+
+    #[test]
+    fn recording_notification_cannot_overtake_a_delayed_release() {
+        use std::sync::Arc;
+        let holds = Arc::new(AudioHolds::new());
+        holds.change(true, |_| {});
+        let (entered, entering) = mpsc::channel();
+        let (release, releasing) = mpsc::channel();
+        let (notifications, observed) = mpsc::channel();
+        let first = Arc::clone(&holds);
+        let released = notifications.clone();
+        let old = thread::spawn(move || {
+            first.change(false, |busy| {
+                entered.send(()).unwrap();
+                releasing.recv_timeout(Duration::from_secs(2)).unwrap();
+                released.send(busy).unwrap();
+            })
+        });
+        entering.recv_timeout(Duration::from_secs(2)).unwrap();
+        let next = Arc::clone(&holds);
+        let new = thread::spawn(move || {
+            next.change(true, |busy| {
+                notifications.send(busy).unwrap();
+            })
+        });
+        release.send(()).unwrap();
+        old.join().unwrap();
+        new.join().unwrap();
+        assert!(!observed.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert!(observed.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert_eq!(holds.count.load(std::sync::atomic::Ordering::Acquire), 1);
+    }
 
     #[test]
     fn capture_marker_holds_and_releases_translation_audio() {

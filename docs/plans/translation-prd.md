@@ -1,6 +1,6 @@
 # Hex 翻译 PRD
 
-状态：v0.4，需求已确认范围仍有效；源码实施中、待验证。不视为验收通过，不授权合并，不更新本机安装。交付仅限个人 fork 上的最新 PR。  
+状态：v0.4，需求已确认范围仍有效；源码已落地、验收证据记录中。不视为验收通过，不授权合并，不更新本机安装。当前个人 fork 分支 `codex/translation` 尚无 PR。
 日期：2026-11-09。行为地图：[translation.md](../features/translation.md)。
 
 ## 1. 要解决的问题
@@ -11,7 +11,7 @@
 
 任务单：[Linear ZJ-31](https://linear.app/zjlinjie/issue/ZJ-31/hexmacos-本地优先英译中音标朗读与独立快捷键窗口)。用户补充明确：页面原型必须能在 Rune + rune-kit + 现有 Hex 主题中实现；这项约束指 UI 框架，不是新增 REST 架构要求。
 
-视觉方案：[imagegen 原型 v1](../designs/translation/README.md)，包含单词主页面和短句独立小窗；已附到 Linear。示例数据与图片不构成原生运行证明。源码已有 Labs 开关、Rune 页与独立小窗、本地引擎和兼容 API 预览发送；后端仍在审查修复、界面仍在独立审查。golden、原生窗口、朗读、词典安装和云端发送均未记为通过。
+视觉方案：[imagegen 原型 v1](../designs/translation/README.md)，包含单词主页面和短句独立小窗；已附到 Linear。示例数据与图片不构成原生运行证明。源码已有 Labs 开关、Rune 页与独立小窗、本地引擎、兼容 API 预览发送，以及 `8fb409e` 审查缺陷的当前修复（`AudioHolds`、异步 `bump` 唤醒、听写未就绪时的独立快捷键 tap、纯 `engine_config` 测试、查询框辅助功能名称、俄语助手词条）。最终针对性复核仍为 pending，不得记为审查通过。golden、原生窗口、真实 IME、物理快捷键、朗读、完整词典安装、离线系统翻译和云端发送均未记为通过。
 
 ### 已确认
 
@@ -243,24 +243,24 @@ Apple 文档说明 TranslationSession 使用设备上的翻译模型；安装资
 
 ## 10. 设置、数据和开发落点
 
-已落地设置：`labs.translation`（默认 false）、`translation.hotkey`（默认 Control-Option-T）。英/美声音标识和朗读语速目前不写入 settings，只作用于当前朗读。联网服务和模型引用 Hex 已配置的兼容 API 设置，不另存一份。沿用 `AppSettings`、原子持久化和控制设置注册；密钥使用现有私有凭据机制，不新增明文密钥字段。查询正文、译文和合成音频不写入设置或常规日志，不进入听写 History 或 Paste Last。
+已落地设置：`labs.translation`（默认 false）、`translation.hotkey`（默认 Control-Option-T）。`TranslationSettings` 只持久化快捷键，这是第一版的实际限制。英/美声音标识不写入 settings。朗读语速是进程内共享原子，pane 与小窗共用，重启后回到正常；不写入 settings。联网服务和模型引用 Hex 已配置的兼容 API 设置，不另存一份。沿用 `AppSettings`、原子持久化和控制设置注册；密钥使用现有私有凭据机制，不新增明文密钥字段。查询正文、译文和合成音频不写入设置或常规日志，不进入听写 History 或 Paste Last。
 
 源码核对后的实施落点（已存在于本 checkout，仍待验证，不是验收）：
 
 - `labs.rs`、`labs/group.rs`、`app_settings`：平台、分组、默认关闭和运行入口门控。
 - `rune_ui/sidebar.rs`、`rune_ui.rs`、`rune_ui/translation*`：独立 pane、共享内容组件与 fixture 场景。
 - `rune_ui/controls.rs`、`docs/design-system.md`：复用现有组件与主题。
-- `macos_rune.rs` 及相关 host：小窗口生命周期、激活、快捷键路由；原生窗口桥只处理系统行为。
+- `macos_rune.rs`、`macos_rune/translation_shortcut.rs`：小窗口生命周期、激活、快捷键路由；听写 listener 未运行时用独立 CGEventTap 承接翻译快捷键（不要求麦克风或模型，仍需 macOS 键盘权限），listener 运行后交还普通监听。原生窗口桥只处理系统行为。
 - `app_settings::HotkeySlot`、录制目标及冲突检查：翻译槽位；默认 `Control + Option + T`。
 - `src/translation*` 与 `apple_translation.swift`：查询、资源检查、异步 worker、系统翻译和朗读。
 - `dictation/compatible_api` 与 `net`：复用兼容 API 的服务、模型、私有凭据与传输；独立翻译提示词；不接入 OpenCode，不要求 `labs.compatible_rewrite` 或 `compatible.selected`。
 - `desktop/i18n`、Rune 辅助功能名称、功能地图与 CLI 设置：`labs.translation`、`translation.hotkey`。
 
-修改只交到个人 fork `zj-linjie/hex` 的最新 PR。不改上游或 `production`。本文不授权合并，也不更新本机安装。
+当前尚无 PR。修改只交到个人 fork `zj-linjie/hex` 的后续 PR。不改上游或 `production`。本文不授权合并，也不更新本机安装。
 
 ## 11. 验收清单
 
-以下仍是验收标准，不是已通过记录。场景渲染不能替代真实快捷键、声音、语言包或联网测试。本 checkout 有对应实现与 locator 测试；golden、原生、音频和云端检查均为 pending。不要把测试存在当成通过次数。
+以下仍是验收标准，不是已通过记录。场景渲染不能替代真实快捷键、声音、语言包或联网测试。本 checkout 有对应实现与 locator 测试；golden、原生弹窗、物理快捷键、真实 IME、音频、完整词典安装、离线系统翻译和云端检查均为 pending。不要把测试存在当成通过次数。最终针对性代码复核仍为 pending。
 
 | 编号 | 场景 | 通过标准 |
 | --- | --- | --- |
@@ -277,9 +277,11 @@ Apple 文档说明 TranslationSession 使用设备上的翻译模型；安装资
 | TR-11 | 听写、助手、会议并用 | 翻译不占麦克风，不改 History/Paste Last，不启动云端助手，不干扰录音工作 |
 | TR-12 | 浅/深色、屏幕边缘、键盘导航 | 两个入口风格一致，无遮挡；长文本滚动；音标字形完整；所有控件有辅助功能名称 |
 
-实施验证包括有价值的查询/门控/竞态/冲突测试、系统桥编译、项目要求的格式及静态检查。单词、短句、资源缺失、加载、失败状态已有 Rune fixture 场景（`mac-translation-*`）；浅深色与 golden 图仍待 Linux `HEX_UPDATE_GOLDENS=1 cargo test --locked --bin hex rune_ui` 或 `check-linux.yml` 产出并人工查看。macOS 原生双窗口和语音另行验收。
+实施验证包括有价值的查询/门控/竞态/冲突测试、系统桥编译、项目要求的格式及静态检查。单词、短句、资源缺失、加载、失败状态已有 Rune fixture 场景（`mac-translation-*`）；缺失场景的下载体积现为 `68_328_242`（CSV + lemma）。浅深色与 golden 图仍待 Linux `HEX_UPDATE_GOLDENS=1 cargo test --locked --bin hex rune_ui` 产出；`8fb409e` 的 [Check Linux 42584100136](https://github.com/zj-linjie/hex/actions/runs/42584100136) 因 mac-only 引用和 `ShortcutTarget::Assistant` 未穷尽而编译失败，无 golden 产物。当前未提交源码已修这些编译错误，当前树的 Linux CI 仍 pending。macOS 原生双窗口、物理快捷键、真实 IME 和语音另行验收。
 
-功能地图见 `docs/features/translation.md`，只记录已实现行为与检查定位；PRD 不充当实现证明。最新用户 PR 仅用于审查，禁止合并，禁止据此更新本机安装，不发布稳定版或移动 `production`。
+架构师在当前树上执行并通过：`cargo test --locked --offline --bin hex translation -- --test-threads=8`（67 项，含查询框辅助功能名称与全部语言目录）；`recording_notification_cannot_overtake_a_delayed_release`；`cargo clippy --locked --offline --bin hex --tests -- -D warnings`；fullfmt + diffcheck。本文档作者未重跑这些命令。`8fb409e` 上曾人工查看十帧 fixture（五场景 × 浅/深色），那是 fixture 数据，不是当前原生弹窗或真实词典。
+
+功能地图见 `docs/features/translation.md`，只记录已实现行为、检查定位与已执行证据；PRD 不充当实现证明。当前无 PR。禁止合并，禁止据此更新本机安装，不发布稳定版或移动 `production`。
 
 ## 12. 推进顺序与剩余选择
 
@@ -287,8 +289,8 @@ Apple 文档说明 TranslationSession 使用设备上的翻译模型；安装资
 2. **资源钉扎**：ECDICT git `39cfb9672c0906b63569e0453c2e6abfb9ab182a`；`ecdict.csv` 66009548 / sha256 `d1ecbdf9…843cc`；`lemma.en.txt` 2318694 / sha256 `e255b097…e0fc`；安装到 Application Support/hex/translation。不用 `ecdict.mini.csv`。真实下载与离线查询仍待验证。
 3. **本地实施（源码已有，待验证）**：Labs、Rune 翻译页、独立小窗口、粘贴查询、音标、释义、系统朗读、系统短句翻译、快捷键和恢复状态。
 4. **联网兜底（源码已有，待验证）**：复用已配置的兼容 API 服务和模型，完整走显式发送和错误恢复。
-5. **验收**：执行适用检查、查看 goldens、原生验证窗口与声音。通过之前不合并、不更新本机安装。
+5. **验收**：执行适用检查、查看 goldens、原生验证窗口与声音。通过之前不合并、不更新本机安装。最终针对性复核返回前不得记为审查通过。
 
-已确定快捷键为 `Control + Option + T`，联网兜底复用现有兼容 API 的服务和模型，不使用 OpenCode。本稿不承诺所有单词都有音标或双口音数据。设置目前只持久化快捷键，朗读声音与语速未写入 settings。
+已确定快捷键为 `Control + Option + T`，联网兜底复用现有兼容 API 的服务和模型，不使用 OpenCode。本稿不承诺所有单词都有音标或双口音数据。设置目前只持久化快捷键，朗读声音与语速未写入 settings；语速是进程内共享状态，这是第一版的实际限制。
 
-本文档作者未运行测试套件、未播放声音、未发起真实模型调用、未更新本机应用。
+本文档作者未运行测试套件、未播放声音、未发起真实模型调用、未下载词典、未改用户 Application Support 或 settings、未更新本机应用。架构师已执行的 Mac 测试、clippy、fmt 与 Linux 失败记录见功能地图 Status of proof。

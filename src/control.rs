@@ -21,6 +21,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::dictation::vocabulary::{self, VocabularyEntry};
+#[cfg(target_os = "macos")]
 use crate::recognition::AssistantCaptureAction;
 
 /// The wire version of [`ControlRequest`] and [`ControlResponse`]. A change
@@ -60,6 +61,7 @@ pub enum AssistantAction {
     Cancel,
 }
 
+#[cfg(target_os = "macos")]
 impl From<AssistantAction> for AssistantCaptureAction {
     fn from(action: AssistantAction) -> Self {
         match action {

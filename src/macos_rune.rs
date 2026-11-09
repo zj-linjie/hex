@@ -64,6 +64,7 @@ mod control;
 mod launch;
 mod main_menu;
 pub(crate) mod status_item;
+mod translation_shortcut;
 mod wake;
 
 use activation::{observe_activation, reopen_on_activation};
@@ -1058,6 +1059,10 @@ fn bring_forward(window: &rune::AppHandle<Ui>) {
 
 impl Pump {
     fn tick(&mut self, indicator: &mut DictationIndicatorUi) {
+        if let Some(published) = self.runtime.published() {
+            translation_shortcut::sync(&published.settings, published.listener.running);
+        }
+
         if self.shutdown.load(Ordering::Relaxed) {
             self.runtime_cancel();
             self.window.quit();
@@ -1433,6 +1438,14 @@ impl MenuTarget {
         // SAFETY: NSObject's init on a freshly allocated instance.
         unsafe { msg_send![super(this), init] }
     }
+}
+
+/// Service callbacks only enqueue redraws; they never wait for the UI.
+pub(crate) fn wake_translation() {
+    if let Some(window) = WINDOW.get() {
+        window.wake();
+    }
+    crate::rune_ui::translation::wake_popup();
 }
 
 /// Runs `f` on the AppKit main thread through the window's event loop.

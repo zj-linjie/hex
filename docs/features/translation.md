@@ -37,6 +37,9 @@ guaranteed to abort on the wire.
 ```ts
 Control-Option-T (editable)                               // TR-09
 ├── Lab off, conflict, or unbound -> no match
+├── dictation listener not running -> independent CGEventTap
+│   (no microphone or model; needs macOS keyboard access)
+│   normal listener takes over once running
 ├── press once -> retract a provisional dictation start and cancel that
 │   capture; an intentional dictation continues; show/focus the popup
 ├── already open -> focus the same window; do not create a second;
@@ -58,11 +61,14 @@ Sources: [labs.rs](../../src/labs.rs) (`Feature::Translation`,
 [sidebar.rs](../../src/rune_ui/sidebar.rs) (`Pane::Translation`),
 [rune_ui/translation.rs](../../src/rune_ui/translation.rs),
 [popup.rs](../../src/rune_ui/translation/popup.rs),
-[macos_rune.rs](../../src/macos_rune.rs) (`install_popup`, `show_translation`),
+[macos_rune.rs](../../src/macos_rune.rs) (`install_popup`, `show_translation`,
+`wake_translation`),
+[translation_shortcut.rs](../../src/macos_rune/translation_shortcut.rs)
+(fallback tap while the dictation listener is not running),
 [recognition.rs](../../src/recognition.rs) (`HotkeyAction::Translation`),
 [suppression.rs](../../src/suppression.rs) (`paste_action` translation slot).
 
-Checks (locators, not passing runs):
+Checks:
 `translation_is_its_own_bit_and_off_by_default` (labs.rs),
 `translation_is_off_and_bound_to_control_option_t_by_default` and
 `an_active_translation_hotkey_conflicts_both_ways`
@@ -71,9 +77,11 @@ Checks (locators, not passing runs):
 `translation_hotkey_recorder_opens_from_the_pane` (rune_ui/tests/panes.rs),
 `control_option_t_opens_translation_and_not_paste` (suppression.rs),
 `translation_controls_are_registered` (control/settings.rs),
-`open_without_the_lab_does_nothing` (popup.rs).
+`open_without_the_lab_does_nothing` (popup.rs),
+`keyboard_entry_does_not_depend_on_dictation_setup` (translation_shortcut.rs).
 Not observed: a physical Control-Option-T on a Mac, Space/fullscreen
-activation, or two-window focus with a real IME.
+activation, two-window focus with a real IME, or the fallback tap with
+macOS keyboard permission granted.
 
 ## Query (TR-03)
 
@@ -97,12 +105,15 @@ real IME behavior remains unobserved.
 
 Sources: [query.rs](../../src/translation/query.rs) (`normalize_submit`,
 `looks_english`), [content.rs](../../src/rune_ui/translation/content.rs)
-(`paste_clipboard`, `can_submit`, `on_change` → `translation::edit`).
+(`paste_clipboard`, `can_submit`, `on_change` → `translation::edit`,
+query field `.label("Translation query")`).
 
 Checks: `gates_empty_too_long_and_non_english`,
 `does_not_truncate_overlong_input` (query.rs),
 `submit_refuses_empty_and_overlong_text` (rune_ui/translation.rs),
-`translation_submit_stays_off_for_an_empty_query` (panes.rs).
+`translation_submit_stays_off_for_an_empty_query` (panes.rs),
+`translation_controls_have_names` (accessibility_tests.rs; query field
+name is non-empty).
 
 ## Word and phrase (TR-04, TR-05)
 
@@ -157,19 +168,26 @@ Speak British English / Speak US English                  // TR-06
     stops speech and refuses a new start
 ```
 
-Speech does not open the microphone. Voice identifiers are not saved;
-`TranslationSettings` persists only the shortcut. `voices_only_label_english_accents`
-enumerates whatever this process sees; it does not prove audible output or
-offline synthesis. AVFAudio exposes no `prefersOnDeviceSpeech` flag here.
+Speech does not open the microphone. Voice identifiers are not saved.
+`TranslationSettings` persists only the shortcut. Normal/Slow lives in a
+process-wide `PREFERRED_RATE` atomic shared by pane and popup; it does not
+survive restart. `voices_only_label_english_accents` enumerates whatever
+this process sees; it does not prove audible output or offline synthesis.
+AVFAudio exposes no `prefersOnDeviceSpeech` flag here.
 
 Sources: [apple.rs](../../src/translation/apple.rs),
 [apple_translation.swift](../../src/apple_translation.swift),
-[content.rs](../../src/rune_ui/translation/content.rs) (`voices_row`),
-[rune_ui/translation.rs](../../src/rune_ui/translation.rs) (`sync_audio_busy`:
-`dictation_busy`, assistant Recording/Busy, `idle_sleep::held` on macOS).
+[speech.rs](../../src/rune_ui/translation/speech.rs) (`voices_row`,
+`PREFERRED_RATE`),
+[recording_environment.rs](../../src/audio/recording_environment.rs)
+(`AudioHolds` serializes count + `set_audio_busy`; dictation
+`CaptureMarker` and meeting `idle_sleep::prevent_sleep` hold/release).
 
 Checks: `voices_only_label_english_accents` (service.rs),
-`translation_controls_have_names` (accessibility_tests.rs).
+`translation_controls_have_names` (accessibility_tests.rs),
+`recording_notification_cannot_overtake_a_delayed_release` and
+`capture_marker_holds_and_releases_translation_audio`
+(recording_environment.rs).
 Pending: native audible speech, missing-voice recovery, recording-interrupts-
 speech on a real Mac, offline synthesis.
 
@@ -204,13 +222,16 @@ Earlier survey on the development Mac (macOS 27.2, not re-run here):
 `canRequestDownloads=false`; compact voices were Samantha (`en-US`) and
 Daniel (`en-GB`). That is a resource snapshot, not a passing translation.
 
-Sources: [dictionary.rs](../../src/translation/dictionary.rs),
+Sources: [dictionary.rs](../../src/translation/dictionary.rs)
+(`DOWNLOAD_BYTES` = CSV + lemma = 68_328_242),
 [app_paths.rs](../../src/app_paths.rs) (`translation_dir`),
-[apple_translation.swift](../../src/apple_translation.swift).
+[apple_translation.swift](../../src/apple_translation.swift),
+[fixtures.rs](../../src/rune_ui/translation/fixtures.rs) (missing scene
+`bytes: 68_328_242`).
 
 Checks: `checksum_rejects_a_wrong_size` (dictionary.rs). Pending: a real
 pinned download, receipt verify, and offline `translate` of one word and one
-sentence.
+sentence. This pass did not mutate Application Support or settings.
 
 ## Compatible API (TR-08)
 
@@ -240,7 +261,7 @@ Sources: [compatible.rs](../../src/translation/compatible.rs),
 Checks: `preview_requires_service_and_model_and_captures_exact_text`,
 `prompt_is_not_the_dictation_protocol` (compatible.rs),
 `configure_follows_compatible_settings_with_the_rewrite_lab_off`
-(app_settings/translation.rs),
+(app_settings/translation.rs; pure `engine_config`, no process singleton),
 `confirm_online_sends_only_the_captured_preview` (service.rs; loopback HTTP,
 not a production model). Pending: a real compatible-API send of the previewed
 text only.
@@ -255,7 +276,8 @@ generation fence                                          // TR-10
 
 recording and product isolation                           // TR-11
 ├── translation never opens the microphone
-├── set_audio_busy from dictation, assistant capture, meeting recording
+├── AudioHolds (serialized count + notify) -> set_audio_busy
+│   from dictation CaptureMarker and meeting idle-sleep guard
 ├── query/gloss/audio never enter History or Paste Last
 └── compatible send does not start the assistant or OpenCode
 
@@ -266,7 +288,10 @@ pane + popup                                              // TR-12
 ```
 
 Sources: [service.rs](../../src/translation/service.rs) (`invalidate`,
-`current`, `already_in_flight`),
+`current`, `already_in_flight`, `bump` → `notify_changed`),
+[translation.rs](../../src/translation.rs) (`set_waker`),
+[macos_rune.rs](../../src/macos_rune.rs) (`wake_translation` wakes main +
+popup; service callbacks never wait for the UI),
 [accessibility_tests.rs](../../src/rune_ui/accessibility_tests.rs),
 [scenes.rs](../../src/rune_ui/scenes.rs) (`mac-translation-*`).
 
@@ -277,8 +302,6 @@ Checks: `local_lookup_generation_and_cancel_drop_stale_results` (TR-10 local),
 `translation_missing_offers_install_and_online`,
 `translation_error_offers_online_only`.
 No `tests/golden` PNG for `mac-translation-*` exists in this checkout.
-Linux `HEX_UPDATE_GOLDENS=1 cargo test --locked --bin hex rune_ui` and
-`check-linux.yml` have not been recorded as run for this feature.
 
 ## Recovery
 
@@ -309,46 +332,71 @@ Control-Option-T on macOS). `hex labs on|off translation`,
 dictation, assistant, Paste Last, raw/second dictation, cancel, Annotate,
 screenshots, and translation, both ways, only while the Lab is on.
 
-Voice ID and speech rate are not persisted in settings. The rate selection is
-kept in process for subsequent playback; it does not survive a restart.
+`TranslationSettings` stores only `hotkey`. Voice ID is not saved. Speech
+rate is a first-version process-wide atomic in
+[speech.rs](../../src/rune_ui/translation/speech.rs), shared by pane and
+popup, and does not survive restart.
 
 ## Status of proof
 
-| Layer | Implemented in source | Observed here |
+Checkout: branch `codex/translation`, committed `ff48b55` plus uncommitted
+source delta (includes `src/macos_rune/translation_shortcut.rs`). No PR.
+Do not merge. Do not update the installed app. This docs pass did not run
+tests, clippy, fmt, goldens, native UI, speech, dictionary install, or
+cloud send, and did not mutate user Application Support or settings.
+
+| Layer | Implemented in source | Observed |
 | --- | --- | --- |
-| Labs gate, pane, popup, shortcut wiring | yes | source inspection only |
-| Engine API, routing, generation fence, preview match | yes | tests exist; this docs pass did not run them |
-| ECDICT pinned install | code + notices | download, convert, 770611-entry load: pending |
+| Labs gate, pane, popup, shortcut wiring | yes, including fallback tap | source inspection; no physical key / native popup |
+| Engine API, routing, generation fence, preview match | yes | architect Mac tests below; not re-run here |
+| ECDICT pinned install | code + notices | download / convert / 770611-entry load: pending |
 | Apple TranslationSession | Swift bridge macOS 26+ | offline translate: pending |
 | AVSpeechSynthesizer en-GB/en-US | bridge + UI buttons | audible speech: pending |
 | Compatible API explicit send | preview + `generate` | real cloud: pending |
-| Rune goldens / CI | five mac-translation scenes | PNG + Linux golden job: pending |
+| Rune goldens / Linux CI | five `mac-translation-*` scenes | no PNG in `tests/golden`; Linux run of current tree pending |
 | Native two-window / IME / Spaces | code | pending |
-| Merge / installed copy | — | not authorized; do not merge; do not update the installed app |
+| Merge / installed copy | — | no PR; not authorized |
 
-On macOS, `cargo test --locked --offline --bin hex translation --
---test-threads=8` at `8fb409e` completed without hanging: 64 passed and 2
-failed. The failures were the Russian catalog's missing assistant strings and
-`translation_controls_have_names`, whose query field had an empty accessible
-name. The Swift bridge passed `swiftc -typecheck src/apple_translation.swift`.
-These checks do not prove native input, audio, offline translation, or cloud use.
-The debug binary rendered all five fixture scenes in both themes on macOS,
-and all ten frames were visually inspected. They are fixture data, not proof
-of a real dictionary install or a native popup. The managed `run_project`
-preview was unavailable because this task was not visible.
+Architect-executed on the current tree (Mac):
+`cargo test --locked --offline --bin hex translation -- --test-threads=8`
+→ 67 passed (includes the query a11y name and all language catalogs).
+Separate `recording_notification_cannot_overtake_a_delayed_release` passed.
+`cargo clippy --locked --offline --bin hex --tests -- -D warnings` passed.
+fullfmt + diffcheck passed. This docs pass did not repeat those commands.
 
-Independent source review did not approve the implementation: it identified a
-busy-count publication race, shortcut availability tied to dictation setup,
-resource-probe completion not waking the UI, and a global singleton config
-test concern. These require source fixes and revalidation. The Linux workflow
-for `8fb409e` was dispatched; its result and golden artifact remain pending.
+Earlier at `8fb409e`: the same translation filter was 64 passed / 2 failed
+(Russian assistant catalog strings; empty query accessible name). Current
+source adds the Russian strings and the query `.label`. Ten fixture frames
+(five `mac-translation-*` scenes × light/dark) were visually inspected on
+that `8fb409e` debug binary. They are fixture data, not a native popup or
+a real dictionary. They are not a visual check of the current tree.
+
+Review defects recorded at `8fb409e` are implemented in the current delta:
+`AudioHolds` serializes hold-count with notification; `bump` calls
+`notify_changed` → `wake_translation` on main + popup; fallback
+`translation_shortcut` tap while the dictation listener is down;
+`engine_config` is a pure function (the compatible-lab-off test no longer
+touches the process singleton); query outer a11y label; twenty Russian
+assistant strings. Final targeted review of those fixes is pending. Do not
+treat the implementation as review-approved.
+
+Linux CI for `8fb409e`:
+[Check Linux run 42584100136](https://github.com/zj-linjie/hex/actions/runs/42584100136)
+(`workflow_dispatch`, branch `codex/translation`). Test job
+[compile failed](https://github.com/zj-linjie/hex/actions/runs/42584100136/job/129049648650)
+on mac-only `audio::recording_environment` from `translation/service.rs` and
+unmatched `ShortcutTarget::Assistant` in `rune_ui/settings.rs`. Nix job
+[failed on the same compile](https://github.com/zj-linjie/hex/actions/runs/42584100136/job/129049648368)
+(still running at architect inspection; completed failure when this docs
+pass read the run). No artifacts, no goldens. Current uncommitted source
+contains those compile-error fixes. No Linux run of the current tree;
+final CI pending.
 
 Known gaps versus the PRD, not hidden:
 
-- `TranslationSettings` stores only `hotkey`.
+- `TranslationSettings` stores only `hotkey`. Shared in-process speech rate
+  is the first-version limit.
 - Popup Esc cancels an online preview before hiding; active preedit takes
-  precedence. These paths have unit checks but no native IME observation.
-- The missing-dictionary fixture labels `bytes: 66_009_548` (CSV size); the
-  engine's `DOWNLOAD_BYTES` is CSV + lemma.
+  precedence. Unit checks exist; no native IME observation.
 - System UI-less translation is macOS 26+, not macOS 15 (the PRD already
   records that floor).

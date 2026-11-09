@@ -52,7 +52,8 @@ pub(super) fn query_field<S: 'static>(
                     }
                 })
                 .build(p.k)
-                .key("translation-query-field"),
+                .key("translation-query-field")
+                .label(tr("Translation query")),
         )
         .child(query_meta(p, count, too_long))
 }

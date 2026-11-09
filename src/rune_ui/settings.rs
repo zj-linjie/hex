@@ -770,7 +770,7 @@ fn portal_grant(ui: &Ui, target: ShortcutTarget) -> Option<&DesktopGrantedShortc
         | ShortcutTarget::Screenshot
         | ShortcutTarget::Translation => return None,
         #[cfg(not(target_os = "macos"))]
-        ShortcutTarget::Translation => return None,
+        ShortcutTarget::Assistant | ShortcutTarget::Translation => return None,
     };
     granted.iter().find(|shortcut| shortcut.name == name)
 }
@@ -1219,7 +1219,6 @@ pub(super) fn hotkey_key(target: ShortcutTarget) -> &'static str {
         ShortcutTarget::CaptureReplay => "capture-replay-hotkey",
         #[cfg(target_os = "macos")]
         ShortcutTarget::SecondDictation => "second-dictation-hotkey",
-        #[cfg(target_os = "macos")]
         ShortcutTarget::Assistant => "assistant-hotkey",
         #[cfg(target_os = "macos")]
         ShortcutTarget::Screenshot => "screenshot-hotkey",

@@ -346,3 +346,19 @@ pub fn stop_speech() {
 pub fn set_audio_busy(busy: bool) {
     service::set_audio_busy(busy);
 }
+
+#[cfg(target_os = "macos")]
+static WAKER: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// The host installs a nonblocking redraw notification for async changes.
+#[cfg(target_os = "macos")]
+pub fn set_waker(waker: fn()) {
+    let _ = WAKER.set(waker);
+}
+
+fn notify_changed() {
+    #[cfg(target_os = "macos")]
+    if let Some(waker) = WAKER.get() {
+        waker();
+    }
+}

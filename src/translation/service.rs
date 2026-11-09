@@ -608,10 +608,7 @@ impl Engine {
             if !state.snapshot.enabled {
                 return;
             }
-            if state.audio_busy
-                || (!skip_native(self)
-                    && crate::audio::recording_environment::translation_audio_hold_count() > 0)
-            {
+            if state.audio_busy || (!skip_native(self) && host_audio_busy()) {
                 state.snapshot.error = Some(LookupError::new(LookupErrorKind::AudioBusy));
                 bump(&mut state);
                 if state.snapshot.speaking.take().is_some() {
@@ -866,6 +863,7 @@ fn invalidate(state: &mut State, halt_install: bool) {
 
 fn bump(state: &mut State) {
     state.snapshot.revision = state.snapshot.revision.saturating_add(1);
+    super::notify_changed();
 }
 
 fn same_config(a: &Config, b: &Config) -> bool {
@@ -1119,6 +1117,17 @@ fn refresh_resources(engine: &Engine) {
     state.snapshot.resources.system = system;
     state.snapshot.voices = voices;
     bump(&mut state);
+}
+
+fn host_audio_busy() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::audio::recording_environment::translation_audio_hold_count() > 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 fn skip_native(engine: &Engine) -> bool {

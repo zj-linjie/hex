@@ -30,6 +30,7 @@ struct Popup {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn install_popup(app: &mut rune::App<Ui>) {
+    translation::set_waker(crate::macos_rune::wake_translation);
     let popup = rune::App::new(spec()).keep_running().on_close(|_, _| {
         if content::live_engine() {
             crate::translation::stop_speech();
@@ -86,7 +87,7 @@ fn summon() {
     }
 }
 
-pub(super) fn wake_popup() {
+pub(crate) fn wake_popup() {
     if let Some(handles) = HANDLES.get() {
         handles.app.wake();
     }

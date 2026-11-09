@@ -29,7 +29,7 @@ fn ready_resources() -> ResourceStatus {
 
 fn missing_resources() -> ResourceStatus {
     ResourceStatus {
-        dictionary: DictionaryStatus::Missing { bytes: 66_009_548 },
+        dictionary: DictionaryStatus::Missing { bytes: 68_328_242 },
         system: SystemTranslationStatus::NotInstalled,
     }
 }

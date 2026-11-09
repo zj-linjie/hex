@@ -31,17 +31,28 @@ impl AppSettings {
     }
 }
 
-pub(super) fn apply_translation(settings: &AppSettings) {
+fn engine_config(settings: &AppSettings) -> crate::translation::Config {
     let enabled = cfg!(target_os = "macos") && settings.labs.translation;
     let processing = &settings.dictation_processing.default_mode.post_processing;
     let compatible = &processing.compatible;
     let deadline = std::time::Duration::from_secs(processing.deadline_seconds.max(1));
-    let fingerprint = ConfigFingerprint {
+    crate::translation::Config {
         enabled,
-        base_url: compatible.base_url.clone(),
-        model: compatible.model.clone(),
-        credential_path: compatible.credential_path.clone(),
-        deadline_secs: deadline.as_secs(),
+        compatible_base_url: compatible.base_url.clone(),
+        compatible_model: compatible.model.clone(),
+        compatible_credential_path: compatible.credential_path.clone(),
+        compatible_deadline: deadline,
+    }
+}
+
+pub(super) fn apply_translation(settings: &AppSettings) {
+    let config = engine_config(settings);
+    let fingerprint = ConfigFingerprint {
+        enabled: config.enabled,
+        base_url: config.compatible_base_url.clone(),
+        model: config.compatible_model.clone(),
+        credential_path: config.compatible_credential_path.clone(),
+        deadline_secs: config.compatible_deadline.as_secs(),
     };
     let mut last = LAST_CONFIG
         .get_or_init(Default::default)
@@ -51,13 +62,7 @@ pub(super) fn apply_translation(settings: &AppSettings) {
         return;
     }
     *last = Some(fingerprint);
-    crate::translation::configure(crate::translation::Config {
-        enabled,
-        compatible_base_url: compatible.base_url.clone(),
-        compatible_model: compatible.model.clone(),
-        compatible_credential_path: compatible.credential_path.clone(),
-        compatible_deadline: deadline,
-    });
+    crate::translation::configure(config);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,11 +132,11 @@ mod tests {
             .post_processing
             .compatible
             .model = "local".into();
-        apply_translation(&settings);
-        let snap = crate::translation::snapshot();
-        assert_eq!(snap.enabled, cfg!(target_os = "macos"));
+        let config = engine_config(&settings);
+        assert_eq!(config.enabled, cfg!(target_os = "macos"));
+        assert_eq!(config.compatible_base_url, "http://127.0.0.1:11434/v1");
+        assert_eq!(config.compatible_model, "local");
         settings.labs.translation = false;
-        apply_translation(&settings);
-        assert!(!crate::translation::snapshot().enabled);
+        assert!(!engine_config(&settings).enabled);
     }
 }
