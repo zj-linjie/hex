@@ -239,6 +239,11 @@ pub(super) fn pane(ui: &Ui, p: Paint, reduced: bool) -> El {
         .child(agent_card(ui, p, reduced))
         .child(every_dictation(ui, p, &processing.default_mode))
         .child(try_card(ui, p, &processing.default_mode));
+    #[cfg(target_os = "linux")]
+    if ui.settings.labs.typed_text {
+        content = content.child(typed_text(ui, p));
+    }
+    #[cfg(target_os = "macos")]
     if ui.settings.labs.compatible_rewrite {
         content = content.child(compatible_settings(ui, p));
     }
@@ -717,6 +722,28 @@ fn step_row(p: Paint, key: &str, index: usize, step: &Step) -> El {
                 })),
         )
         .child(tag)
+}
+
+/// Labs › Transform typed text: a shortcut that runs the focused app's
+/// Output steps on the text already typed in the focused field and replaces
+/// it. Unbound until the person records one (Linux).
+#[cfg(target_os = "linux")]
+fn typed_text(ui: &Ui, p: Paint) -> El {
+    labeled(
+        p,
+        "typed-text",
+        tr("Typed text"),
+        tr("Runs Output on what you typed"),
+        super::general::shortcut_rows(
+            ui,
+            p,
+            "typed-text",
+            &super::icons::KEYBOARD,
+            tr("Transform typed text"),
+            ShortcutTarget::TypedText,
+            Some(tr("Replaces what you typed where it is")),
+        ),
+    )
 }
 
 /// A sentence in, and what Hex would paste for it out.

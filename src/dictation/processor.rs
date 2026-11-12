@@ -18,6 +18,46 @@ const GENERATE_ENDPOINTS: [&str; 2] = ["/api/experimental/generate", "/api/gener
 
 pub use crate::app_settings::DictationPostProcessing as PostProcessingSettings;
 
+/// Where the text a mode processes came from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Source {
+    /// A hotkey, API, or meeting dictation: heard speech.
+    Dictation,
+    /// Labs › Transform typed text: the selection already written in the
+    /// focused field.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    TypedText,
+}
+
+impl Source {
+    /// The `source` field transformations receive.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dictation => "dictation",
+            Self::TypedText => "typed-text",
+        }
+    }
+}
+
+/// The speech-only Labs steps, read once per processing run.
+#[derive(Clone, Copy, Debug, Default)]
+struct DictationLabs {
+    spoken_formatting: bool,
+    spoken_symbols: bool,
+    filler_words: bool,
+}
+
+impl DictationLabs {
+    /// The Labs switches as this process holds them now.
+    fn current() -> Self {
+        Self {
+            spoken_formatting: crate::labs::spoken_formatting(),
+            spoken_symbols: crate::labs::spoken_symbols(),
+            filler_words: crate::labs::filler_words(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Profile {
     name: String,
@@ -30,6 +70,9 @@ pub struct Profile {
     /// The mode's own vocabulary, heard and spelled ahead of the shared list.
     vocabulary: Vec<VocabularyEntry>,
     compatible: Option<crate::app_settings::CompatibleRewriteSettings>,
+    /// The mode's speech model and language while it matches the foreground
+    /// app (Labs › Switch model with app).
+    speech: Option<crate::app_settings::KeyboardModelChoice>,
 }
 
 impl Profile {
@@ -44,7 +87,16 @@ impl Profile {
             transformations: Vec::new(),
             vocabulary: Vec::new(),
             compatible: None,
+            speech: None,
         }
+    }
+
+    pub(crate) fn speech(
+        mut self,
+        speech: Option<crate::app_settings::KeyboardModelChoice>,
+    ) -> Self {
+        self.speech = speech;
+        self
     }
 
     pub(crate) fn vocabulary(mut self, vocabulary: Vec<VocabularyEntry>) -> Self {
@@ -108,6 +160,7 @@ impl Profile {
             &mode.post_processing,
         )
         .vocabulary(mode.vocabulary.clone())
+        .speech(mode.speech.clone())
     }
 
     /// Builds a runtime profile from persisted settings. A malformed model key
@@ -267,6 +320,10 @@ pub struct Profiles {
     global: ReplacementSet,
 }
 
+mod voice_prompt;
+
+use voice_prompt::voice_prompt_processed;
+
 impl Profiles {
     pub fn new(default: Profile) -> Self {
         Self {
@@ -323,61 +380,100 @@ impl Profiles {
         self.select(context).vocabulary.clone()
     }
 
+    /// The speech model and language the selected mode carries, if any.
+    pub(crate) fn speech_for(
+        &self,
+        context: &ContextSnapshot,
+    ) -> Option<crate::app_settings::KeyboardModelChoice> {
+        self.select(context).speech.clone()
+    }
+
     pub fn processes(&self, context: &ContextSnapshot) -> bool {
         let profile = self.select(context);
         profile.ai_enabled || !profile.transformations.is_empty()
     }
 
+    /// Whether processing `transcript` would run a voice prompt request: the
+    /// lab is on, this is heard speech, and the phrase is there after
+    /// preparation and replacements. The `Nothing` outcome asks nothing, so
+    /// it shows no stage either.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn voice_prompts(
+        &self,
+        transcript: &str,
+        language: &str,
+        context: &ContextSnapshot,
+        source: Source,
+    ) -> bool {
+        use crate::dictation::voice_prompt::Instruction;
+        if source != Source::Dictation {
+            return false;
+        }
+        let Some(phrase) = crate::labs::voice_prompt().then(crate::labs::voice_prompt_phrase)
+        else {
+            return false;
+        };
+        let profile = self.select(context);
+        let prepared = prepare_transcript(transcript, language, source, DictationLabs::current());
+        let corrected = profile
+            .replacements
+            .replace(&self.global.replace(&prepared));
+        matches!(
+            crate::dictation::voice_prompt::instruction(&corrected, &phrase),
+            Some(instruction) if !matches!(instruction, Instruction::Nothing)
+        )
+    }
+
     pub fn process_cancellable(
         &self,
         transcript: &str,
+        language: &str,
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
+        source: Source,
     ) -> Processed {
-        self.process_with_short_deepseek(
+        let voice_prompt = crate::labs::voice_prompt().then(crate::labs::voice_prompt_phrase);
+        self.process_cancellable_with(
             transcript,
+            language,
             context,
             cancelled,
+            source,
+            voice_prompt.as_deref(),
             crate::labs::skip_short_deepseek(),
         )
     }
 
-    fn process_with_short_deepseek(
+    /// [`Self::process_cancellable`] with the voice prompt phrase already
+    /// resolved: `None` is Labs › Voice prompt off, or locked.
+    #[allow(clippy::too_many_arguments)]
+    fn process_cancellable_with(
         &self,
         transcript: &str,
+        language: &str,
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
+        source: Source,
+        voice_prompt: Option<&str>,
         skip_short: bool,
     ) -> Processed {
         let profile = self.select(context);
-        // Labs › Spoken formatting starts here, ahead of every mode's
-        // corrections, so it is off for raw dictation and meetings.
-        let formatted;
-        let transcript = if crate::labs::spoken_formatting() {
-            formatted = crate::dictation::spoken_formatting::apply(transcript);
-            formatted.as_str()
-        } else {
-            transcript
-        };
-        // Labs › Spoken symbols, likewise ahead of the corrections.
-        let symbolized;
-        let transcript = if crate::labs::spoken_symbols() {
-            symbolized = crate::dictation::spoken_symbols::apply(transcript);
-            symbolized.as_str()
-        } else {
-            transcript
-        };
-        // Labs › Remove filler words, likewise ahead of the corrections.
-        let unfilled;
-        let transcript = if crate::labs::filler_words() {
-            unfilled = crate::dictation::filler_words::apply(transcript);
-            unfilled.as_str()
-        } else {
-            transcript
-        };
+        // Labs › Spoken formatting, spoken symbols, and filler words only
+        // make sense for speech: typed text starts from what is already
+        // written and skips them.
+        let prepared = prepare_transcript(transcript, language, source, DictationLabs::current());
         let corrected = profile
             .replacements
-            .replace(&self.global.replace(transcript));
+            .replace(&self.global.replace(&prepared));
+        // Labs › Voice prompt: heard speech may carry a spoken instruction
+        // that replaces the mode's rewrite with one request of its own.
+        if source == Source::Dictation
+            && let Some(phrase) = voice_prompt
+            && let Some(instruction) =
+                crate::dictation::voice_prompt::instruction(&corrected, phrase)
+        {
+            return voice_prompt_processed(profile, &instruction, &corrected, context, cancelled);
+        }
         // A transcript of numbers alone has nothing to rewrite; a model only
         // turns it into digits and re-punctuates it (#949).
         let numbers_only = profile.ai_enabled && numbers_only(&corrected);
@@ -408,6 +504,7 @@ impl Profiles {
         if !profile.ai_enabled || numbers_only || short_deepseek {
             return Processed {
                 text: corrected,
+                nothing: false,
                 observation: None,
                 transformations: profile.transformations.clone(),
             };
@@ -445,6 +542,7 @@ impl Profiles {
         }
         Processed {
             text: text.unwrap_or(corrected),
+            nothing: false,
             observation: Some(observation),
             transformations: profile.transformations.clone(),
         }
@@ -890,6 +988,10 @@ fn opencode_api_within<T: for<'de> Deserialize<'de>>(
 
 pub struct Processed {
     pub text: String,
+    /// A voice prompt that deliberately asked nothing: the listeners finish
+    /// quietly instead of failing on empty text. Never true for an ordinary
+    /// empty output.
+    pub nothing: bool,
     pub observation: Option<ProcessingObservation>,
     pub transformations: Vec<String>,
 }
@@ -903,6 +1005,7 @@ impl Processed {
     pub fn unchanged(text: &str) -> Self {
         Self {
             text: text.to_string(),
+            nothing: false,
             observation: None,
             transformations: Vec::new(),
         }
@@ -915,12 +1018,19 @@ impl Processed {
         client: &crate::personal_commands::TransformationClient,
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
+        source: Source,
     ) {
         if self.transformations.is_empty() || cancelled.load(Ordering::Acquire) {
             return;
         }
         let started = Instant::now();
-        let transformed = client.transform(&self.transformations, &self.text, context, cancelled);
+        let transformed = client.transform(
+            &self.transformations,
+            &self.text,
+            context,
+            cancelled,
+            source,
+        );
         let observation = self
             .observation
             .get_or_insert_with(|| ProcessingObservation {
@@ -936,6 +1046,38 @@ impl Processed {
             Err(error) => observation.fallback = Some(error),
         }
     }
+}
+
+/// The transcript ahead of mode corrections. Spoken formatting, spoken
+/// symbols, and filler words only apply to heard speech, so typed text skips
+/// every one of them.
+fn prepare_transcript(
+    transcript: &str,
+    language: &str,
+    source: Source,
+    labs: DictationLabs,
+) -> String {
+    if source != Source::Dictation {
+        return transcript.to_owned();
+    }
+    let formatted;
+    let transcript = if labs.spoken_formatting {
+        formatted = crate::dictation::spoken_formatting::apply(transcript);
+        formatted.as_str()
+    } else {
+        transcript
+    };
+    let symbolized;
+    let transcript = if labs.spoken_symbols {
+        symbolized = crate::dictation::spoken_symbols::apply(transcript);
+        symbolized.as_str()
+    } else {
+        transcript
+    };
+    // Only English dictations drop fillers: "er" and "um" are ordinary words
+    // in other languages, and "auto" says nothing about the language.
+    crate::dictation::filler_words::strip_if(transcript, language, labs.filler_words)
+        .unwrap_or_else(|| transcript.to_owned())
 }
 
 fn prompt(
@@ -1240,6 +1382,7 @@ fn wait_for_generation_retry(
 
 #[cfg(test)]
 mod tests {
+    use super::voice_prompt::{voice_prompt_answer, voice_prompt_fallback, voice_prompt_request};
     use super::*;
     use std::net::TcpListener;
 
@@ -1265,10 +1408,13 @@ mod tests {
         });
         let profiles = Profiles::new(profile);
         let run = |text, enabled| {
-            profiles.process_with_short_deepseek(
+            profiles.process_cancellable_with(
                 text,
+                "en",
                 &ContextSnapshot::default(),
                 &AtomicBool::new(false),
+                Source::Dictation,
+                None,
                 enabled,
             )
         };
@@ -1305,10 +1451,13 @@ mod tests {
             credential_path: String::new(),
         });
         let started = Instant::now();
-        let result = Profiles::new(profile).process_with_short_deepseek(
+        let result = Profiles::new(profile).process_cancellable_with(
             "你好",
+            "en",
             &ContextSnapshot::default(),
             &AtomicBool::new(false),
+            Source::Dictation,
+            None,
             true,
         );
         assert_eq!(result.text, "你好");
@@ -1329,8 +1478,10 @@ mod tests {
         });
         let processed = Profiles::new(profile).process_cancellable(
             "hello world",
+            "en",
             &ContextSnapshot::default(),
             &AtomicBool::new(false),
+            Source::Dictation,
         );
         assert_eq!(processed.text, "hello world");
         assert!(processed.observation.unwrap().fallback.is_some());
@@ -1369,6 +1520,7 @@ mod tests {
             browser_url: url.map(|url| Url::parse(url).unwrap()),
             window_title: None,
             input_revision: None,
+            screen_terms: Vec::new(),
         }
     }
 
@@ -1604,6 +1756,238 @@ mod tests {
         assert_eq!(profiles.select(&context("Zed", None)).name, "default");
     }
 
+    fn voice_prompt(text: &str) -> crate::dictation::voice_prompt::Instruction {
+        crate::dictation::voice_prompt::instruction(text, "rewrite this")
+            .expect("the phrase is in the transcript")
+    }
+
+    #[test]
+    fn a_spoken_instruction_replaces_the_rewrite_and_carries_context() {
+        let instruction = voice_prompt("We ship Friday. rewrite this make it formal");
+        let vocabulary = [VocabularyEntry {
+            term: "Rune".into(),
+            sounds_like: vec!["roon".into()],
+        }];
+        let rewrite = Profile::new("Mode", "Keep it short.").ai_enabled(true);
+        let request = voice_prompt_request(
+            &rewrite,
+            &instruction,
+            &context("Slack", Some("https://x.com/home")),
+            &vocabulary,
+        );
+        assert!(request.contains("Keep it short."), "{request}");
+        assert!(request.contains("make it formal"), "{request}");
+        assert!(request.contains("We ship Friday"), "{request}");
+        assert!(
+            request.contains("Foreground application: Slack"),
+            "{request}"
+        );
+        assert!(request.contains("Browser host: x.com"), "{request}");
+        assert!(
+            request.contains("Rune (may be transcribed as roon)"),
+            "{request}"
+        );
+        assert!(request.contains(PROTOCOL_PROMPT), "{request}");
+
+        // A mode with its rewrite off uses the same request without its
+        // prompt as background.
+        let plain = voice_prompt_request(
+            &Profile::new("Mode", "Keep it short."),
+            &instruction,
+            &context("Slack", None),
+            &[],
+        );
+        assert!(!plain.contains("Keep it short."), "{plain}");
+        assert!(plain.contains("make it formal"), "{plain}");
+    }
+
+    #[test]
+    fn a_failed_voice_prompt_pastes_its_text_or_the_whole_transcript() {
+        let both = voice_prompt("Ship it. rewrite this make it formal");
+        assert_eq!(
+            voice_prompt_fallback(&both, "Ship it. rewrite this make it formal"),
+            "Ship it."
+        );
+        let text_only = voice_prompt("Ship it. rewrite this");
+        assert_eq!(
+            voice_prompt_fallback(&text_only, "Ship it. rewrite this"),
+            "Ship it."
+        );
+        // Nothing before the phrase: the whole corrected transcript falls back.
+        let prompt_only = voice_prompt("rewrite this an email to Bob");
+        assert_eq!(
+            voice_prompt_fallback(&prompt_only, "rewrite this an email to Bob"),
+            "rewrite this an email to Bob"
+        );
+    }
+
+    #[test]
+    fn text_only_and_prompt_only_requests_ask_for_the_right_thing() {
+        let profile = Profile::new("Mode", "");
+        let text_only = voice_prompt("We ship Friday. rewrite this");
+        let request = voice_prompt_request(&profile, &text_only, &context("Zed", None), &[]);
+        assert!(
+            request.contains("Rewrite the dictated text below so it is clear and concise"),
+            "{request}"
+        );
+        assert!(request.contains("We ship Friday."), "{request}");
+        assert!(!request.contains("<instruction>"), "{request}");
+
+        let prompt_only = voice_prompt("rewrite this an email to Bob");
+        let request = voice_prompt_request(&profile, &prompt_only, &context("Zed", None), &[]);
+        assert!(
+            request.contains("Write exactly what the spoken instruction asks for"),
+            "{request}"
+        );
+        assert!(request.contains("an email to Bob"), "{request}");
+        assert!(!request.contains("<text>"), "{request}");
+
+        // A mode whose rewrite is on but has no prompt adds no empty header.
+        let request = voice_prompt_request(
+            &Profile::new("Mode", "   ").ai_enabled(true),
+            &text_only,
+            &context("Zed", None),
+            &[],
+        );
+        assert!(!request.contains("Background instructions"), "{request}");
+    }
+
+    #[test]
+    fn a_closed_or_locked_voice_prompt_gate_leaves_processing_alone() {
+        use crate::policy::{Lock, Policy};
+        let profiles = Profiles::new(Profile::new("default", "").ai_enabled(false));
+        let context = context("Zed", None);
+        let transcript = "We ship Friday. rewrite this make it formal";
+        let cancelled = AtomicBool::new(false);
+
+        // Labs › Voice prompt off: no phrase is even resolved.
+        let processed = profiles.process_cancellable_with(
+            transcript,
+            "en",
+            &context,
+            &cancelled,
+            Source::Dictation,
+            None,
+            false,
+        );
+        assert_eq!(processed.text, transcript);
+        assert!(!processed.nothing);
+
+        // An organization's DisableOpenCodeProcessing lock closes the gate,
+        // even with the lab's saved switch on.
+        let locked =
+            crate::labs::voice_prompt_under(Policy::default().with(Lock::OpenCodeProcessing));
+        assert!(!locked);
+        let locked_phrase = locked.then(crate::labs::voice_prompt_phrase);
+        let processed = profiles.process_cancellable_with(
+            transcript,
+            "en",
+            &context,
+            &cancelled,
+            Source::Dictation,
+            locked_phrase.as_deref(),
+            true,
+        );
+        assert_eq!(processed.text, transcript);
+
+        // Typed text never splits on the phrase.
+        let processed = profiles.process_cancellable_with(
+            transcript,
+            "en",
+            &context,
+            &cancelled,
+            Source::TypedText,
+            Some("rewrite this"),
+            true,
+        );
+        assert_eq!(processed.text, transcript);
+        assert!(!processed.nothing);
+    }
+
+    #[test]
+    fn a_voice_prompt_that_asks_nothing_ends_through_process_cancellable() {
+        let profiles = Profiles::new(Profile::new("default", ""));
+        let processed = profiles.process_cancellable_with(
+            "rewrite this thanks a lot",
+            "en",
+            &context("Zed", None),
+            &AtomicBool::new(false),
+            Source::Dictation,
+            Some("rewrite this"),
+            true,
+        );
+        assert_eq!(processed.text, "");
+        assert!(processed.nothing, "the listeners finish quietly");
+        assert!(processed.transformations.is_empty());
+    }
+
+    #[test]
+    fn a_voice_prompt_answer_or_its_fallback_keeps_the_modes_transformations() {
+        let both = voice_prompt("Ship it. rewrite this make it formal");
+        let transformations = vec!["lowercase".to_string()];
+        let answered = voice_prompt_answer(
+            &both,
+            Some("Make it formal.".into()),
+            "Ship it. rewrite this make it formal",
+            &transformations,
+            None,
+        );
+        assert_eq!(answered.text, "Make it formal.");
+        assert_eq!(answered.transformations, transformations);
+        let failed = voice_prompt_answer(
+            &both,
+            None,
+            "Ship it. rewrite this make it formal",
+            &transformations,
+            None,
+        );
+        assert_eq!(failed.text, "Ship it.");
+        assert_eq!(failed.transformations, transformations);
+    }
+
+    #[test]
+    fn a_voice_prompt_with_nothing_to_ask_pastes_nothing_and_runs_no_transformations() {
+        let processed = voice_prompt_processed(
+            &Profile::new("Mode", "").transformations(vec!["lowercase".into()]),
+            &voice_prompt("rewrite this thanks"),
+            "rewrite this thanks",
+            &context("Zed", None),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(processed.text, "");
+        assert!(processed.transformations.is_empty());
+        assert!(processed.observation.is_none());
+    }
+
+    #[test]
+    fn typed_text_skips_the_dictation_only_labs() {
+        let labs = DictationLabs {
+            spoken_formatting: true,
+            spoken_symbols: true,
+            filler_words: true,
+        };
+        let speech = "um first new line done comma thanks";
+        let dictated = prepare_transcript(speech, "en", Source::Dictation, labs);
+        assert!(dictated.contains('\n'), "{dictated}");
+        assert!(dictated.contains(", "), "{dictated}");
+        assert!(!dictated.to_lowercase().contains("um "), "{dictated}");
+        assert!(!dictated.contains("new line"), "{dictated}");
+        assert!(
+            !dictated.contains("comma"),
+            "spoken symbols should have replaced it: {dictated}"
+        );
+
+        // Typed text runs the same profile but none of the speech Labs.
+        assert_eq!(
+            prepare_transcript(speech, "en", Source::TypedText, labs),
+            speech
+        );
+        assert_eq!(
+            prepare_transcript(speech, "en", Source::Dictation, DictationLabs::default()),
+            speech
+        );
+    }
+
     #[test]
     fn mode_corrections_run_before_registered_transformations() {
         let profile = Profile::new("Global", "")
@@ -1618,8 +2002,10 @@ mod tests {
 
         let processed = profiles.process_cancellable(
             "Use open code.",
+            "en",
             &context("Zed", None),
             &AtomicBool::new(false),
+            Source::Dictation,
         );
 
         assert_eq!(processed.text, "Use OpenCode.");
@@ -1649,8 +2035,10 @@ mod tests {
         let profiles = Profiles::new(Profile::new("default", "Rewrite freely.").ai_enabled(true));
         let processed = profiles.process_cancellable(
             "one two three four five",
+            "en",
             &context("Zed", None),
             &AtomicBool::new(false),
+            Source::Dictation,
         );
         assert_eq!(processed.text, "one two three four five");
         assert!(processed.observation.is_none());

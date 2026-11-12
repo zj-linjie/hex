@@ -7,7 +7,7 @@
 use rune::TextEdit;
 use scrawl_capture::capture::Stage;
 
-use crate::capture_host::CaptureNeed;
+use crate::capture_host::{AskedBy, CaptureNeed};
 use crate::desktop::i18n::{tr, tr_fill};
 
 use super::tuning::{self, CapsuleFlow};
@@ -142,7 +142,7 @@ pub(crate) enum Route {
         site: Option<String>,
     },
     /// Guesses, best first; nothing was sent. `site` is what a rule
-    /// would match ("problems.kitlangton.com").
+    /// would match ("example.com").
     Guess {
         suggested: Vec<Dest>,
         recent: Vec<Dest>,
@@ -212,9 +212,10 @@ pub(crate) enum Grant {
 /// Everything that moves the capsule.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Input {
-    /// A capture was refused for a permission Hex lacks: the helper opens
-    /// in its place.
-    NeedsPermission(CaptureNeed),
+    /// A capture (or the Screenshots picker) was refused for a permission
+    /// Hex lacks: the helper opens in its place, and its grant returns to
+    /// what asked.
+    NeedsPermission(CaptureNeed, AskedBy),
     /// How that permission stands now, while the helper shows.
     Permission(CaptureNeed, Grant),
     /// A capture's stage, from `capture_host`'s engine events.
@@ -288,6 +289,12 @@ pub(crate) enum Action {
     Record(Mode),
     /// Start recording what the picker picked on screen.
     Start(crate::capture_host::CaptureTarget),
+    /// The Screenshots picker, once its permission is granted: opens it
+    /// again to shoot, or to record when `record` is set, instead of
+    /// starting an Annotate capture.
+    OpenScreenshots {
+        record: bool,
+    },
     /// The permission helper's Allow: macOS's prompt, or System Settings
     /// with the guide beside it.
     Allow(CaptureNeed),
@@ -369,10 +376,14 @@ pub(crate) struct List {
     /// than the suggestions it opened from never shrinks it.
     pub(crate) min_rows: usize,
     pub(crate) selected: usize,
+    /// The row a Shift pick would send to: the one under the pointer, else
+    /// the search's highlighted row. Over the suggestions, a click picks,
+    /// so with the pointer off the rows there is none.
+    pub(crate) target: Option<usize>,
     pub(crate) footer: Footer,
     /// The site or app a Shift pick saves a rule for, and whether Shift is
-    /// down: then the footer says so and the highlighted row reads
-    /// "always".
+    /// down: then the footer (or the suggestions' header) says so and the
+    /// target row reads "always".
     pub(crate) always: Option<(String, bool)>,
 }
 
@@ -390,6 +401,10 @@ impl List {
 
     pub(crate) fn selected_dest(&self) -> Option<&Dest> {
         self.rows().nth(self.selected)
+    }
+
+    pub(crate) fn target_dest(&self) -> Option<&Dest> {
+        self.target.and_then(|row| self.rows().nth(row))
     }
 }
 
@@ -536,11 +551,13 @@ enum Phase {
         what: Failure,
         why: Option<String>,
     },
-    /// The permission helper: a capture needs `need`.
+    /// The permission helper: a capture needs `need`, and its grant returns
+    /// to `asked_by`.
     Permission {
         need: CaptureNeed,
         grant: Grant,
         at: f64,
+        asked_by: AskedBy,
     },
 }
 
@@ -575,6 +592,9 @@ struct Open {
     back: bool,
     /// Shift is down: a pick also saves a rule.
     shift: bool,
+    /// The row the pointer moved onto, until it leaves the row, a key
+    /// moves the highlight, or the rows change under it.
+    pointed: Option<usize>,
 }
 
 impl Open {
@@ -585,6 +605,7 @@ impl Open {
             typing: false,
             back: false,
             shift: false,
+            pointed: None,
         }
     }
 }
@@ -684,8 +705,9 @@ pub(crate) struct Flow {
     /// Annotate draws now.
     drawing: bool,
     /// A capture that just finished with no screen asked for the
-    /// permission helper: it opens once that capture's capsule folds.
-    helper_next: Option<CaptureNeed>,
+    /// permission helper: it opens once that capture's capsule folds, and
+    /// returns to what asked.
+    helper_next: Option<(CaptureNeed, AskedBy)>,
 }
 
 impl Default for Flow {
@@ -857,6 +879,34 @@ impl Flow {
         self.keys() != before
     }
 
+    /// The pointer moved on the open list's `row` (`on`), or left it. The
+    /// row it is on is where a Shift pick goes; in the search the highlight
+    /// follows it too, as in a menu, and the arrow keys go on from there.
+    /// True when that changes what the capsule draws.
+    pub(crate) fn point(&mut self, row: usize, on: bool) -> bool {
+        let Phase::Routed(Routed {
+            route,
+            open: Some(open),
+            ..
+        }) = &mut self.phase
+        else {
+            return false;
+        };
+        let before = (open.pointed, open.selected);
+        if on {
+            if row >= list(route, open).rows().count() {
+                return false;
+            }
+            open.pointed = Some(row);
+            if open.typing {
+                open.selected = row;
+            }
+        } else if open.pointed == Some(row) {
+            open.pointed = None;
+        }
+        (open.pointed, open.selected) != before
+    }
+
     pub(crate) fn input(&mut self, input: Input, now: f64) -> Vec<Action> {
         // A new capture or a new answer may change the list under a resting
         // pointer: it has to move again before typing searches.
@@ -867,13 +917,40 @@ impl Flow {
             self.aimed = false;
         }
         let before = self.phase.clone();
+        let pointed = self.pointed();
         let actions = self.step(input, now);
+        // Another session under a resting pointer: it has to move to
+        // point again.
+        if self.pointed() != pointed
+            && let Phase::Routed(Routed {
+                open: Some(open), ..
+            }) = &mut self.phase
+        {
+            open.pointed = None;
+        }
         self.cue(&before, &actions);
         self.closing(&before);
         self.left_waiting(before, &actions);
         let mut actions = actions;
         actions.extend(self.hold_countdown(now));
         actions
+    }
+
+    /// The session of the open list's row under the pointer.
+    fn pointed(&self) -> Option<String> {
+        let Phase::Routed(Routed {
+            route,
+            open: Some(open),
+            ..
+        }) = &self.phase
+        else {
+            return None;
+        };
+        let row = open.pointed?;
+        list(route, open)
+            .rows()
+            .nth(row)
+            .map(|dest| dest.session.clone())
     }
 
     /// A list closed with nothing picked waits for Send to….
@@ -987,11 +1064,12 @@ impl Flow {
                     let before = std::mem::replace(&mut self.phase, Phase::Hidden);
                     self.closed = true;
                     self.left_waiting(before, &[]);
-                    if let Some(need) = self.helper_next.take() {
+                    if let Some((need, asked_by)) = self.helper_next.take() {
                         self.phase = Phase::Permission {
                             need,
                             grant: Grant::Off,
                             at: now,
+                            asked_by,
                         };
                     }
                 }
@@ -1133,7 +1211,7 @@ mod tests {
                 Dest::new("HEX", "last sent"),
             ],
             recent: vec![Dest::new("HOME", "yesterday")],
-            site: Some("problems.kitlangton.com".into()),
+            site: Some("example.com".into()),
         }
     }
 
@@ -1146,7 +1224,7 @@ mod tests {
             to: to.clone(),
             suggested: vec![to],
             recent: vec![Dest::new("HOME", "yesterday")],
-            site: Some("problems.kitlangton.com".into()),
+            site: Some("example.com".into()),
         }
     }
 
@@ -1658,7 +1736,7 @@ mod tests {
                 Dest::new("HEX", "last sent").session("ses_hex"),
                 Dest::new("HOME", "recent").session("ses_home"),
             ],
-            site: Some("problems.kitlangton.com".into()),
+            site: Some("example.com".into()),
         }
     }
 
@@ -1909,7 +1987,7 @@ mod tests {
         flow.input(Input::Undone(Undone::TakenBack), 2.2);
         assert_eq!(rows(&flow, 2.2), ["HEX", "HOME", "SEER"], "last of all");
         let (_, list) = done(&flow, 2.2).open.unwrap();
-        assert_eq!(list.always, Some(("problems.kitlangton.com".into(), false)));
+        assert_eq!(list.always, Some(("example.com".into(), false)));
     }
 
     /// The session taken back goes once to the end of the whole list,
@@ -2086,7 +2164,7 @@ mod tests {
             flow.input(Input::Send { always: true }, 4.0),
             [Action::Send {
                 to: "SEER".into(),
-                always: Some("problems.kitlangton.com".into())
+                always: Some("example.com".into())
             }]
         );
     }
@@ -2401,7 +2479,7 @@ mod tests {
         assert_eq!(names, ["SEER", "HEX", "HOME"], "suggested, then recent");
         assert_eq!(list.selected, 0, "the best is marked");
         assert_eq!(list.footer, Footer::Suggesting);
-        assert_eq!(list.always, Some(("problems.kitlangton.com".into(), false)));
+        assert_eq!(list.always, Some(("example.com".into(), false)));
         assert_eq!(
             flow.keys(),
             Some(CapsuleKeys::Suggest {
@@ -2620,13 +2698,26 @@ mod tests {
         flow.input(Input::Routed(guess()), 0.0);
         flow.input(Input::Shift(true), 0.5);
         let (_, list) = done(&flow, 0.5).open.unwrap();
-        assert_eq!(list.always, Some(("problems.kitlangton.com".into(), true)));
+        assert_eq!(list.always, Some(("example.com".into(), true)));
+        assert!(
+            list.rows().all(|dest| dest.why != "always"),
+            "over the suggestions a click picks: off the rows, nowhere yet"
+        );
+        assert!(flow.point(1, true));
+        let (_, list) = done(&flow, 0.6).open.unwrap();
         let notes: Vec<_> = list.rows().map(|dest| dest.why.as_str()).collect();
-        assert_eq!(notes[0], "always", "the highlighted row is where it goes");
-        assert_ne!(notes[1], "always");
+        assert_eq!(
+            notes[1], "always",
+            "the row under the pointer is where it goes"
+        );
+        assert_ne!(notes[0], "always");
+        assert_eq!(
+            list.target_dest().map(|dest| dest.name.as_str()),
+            Some("HEX")
+        );
         flow.input(Input::Shift(false), 1.0);
         let (_, list) = done(&flow, 1.0).open.unwrap();
-        assert_eq!(list.always, Some(("problems.kitlangton.com".into(), false)));
+        assert_eq!(list.always, Some(("example.com".into(), false)));
         assert!(
             list.rows().all(|dest| dest.why != "always"),
             "released, as before"
@@ -2636,7 +2727,7 @@ mod tests {
             flow.input(Input::SendRow(1), 2.0),
             [Action::Send {
                 to: "HEX".into(),
-                always: Some("problems.kitlangton.com".into())
+                always: Some("example.com".into())
             }]
         );
         let sent = done(&flow, 2.0);
@@ -2656,7 +2747,62 @@ mod tests {
             flow.click(Id::Row(0), 1.0),
             [Action::Send {
                 to: "SEER".into(),
-                always: Some("problems.kitlangton.com".into())
+                always: Some("example.com".into())
+            }]
+        );
+    }
+
+    #[test]
+    fn shift_follows_the_pointer_and_the_arrows_go_on_from_it() {
+        let names = |flow: &Flow| -> Vec<String> {
+            let (_, list) = done(flow, 1.0).open.unwrap();
+            list.rows()
+                .filter(|dest| dest.why == "always")
+                .map(|dest| dest.name.clone())
+                .collect()
+        };
+        let mut flow = Flow::new();
+        flow.input(Input::Routed(guess()), 0.0);
+        flow.input(Input::Shift(true), 0.1);
+        flow.point(0, true);
+        assert_eq!(names(&flow), ["SEER"]);
+        // Onto the next row: the pointer reaches it before it leaves the
+        // last one.
+        flow.point(2, true);
+        assert!(!flow.point(0, false), "leaving a row it already left");
+        assert_eq!(names(&flow), ["HOME"]);
+        assert!(flow.point(2, false));
+        assert!(names(&flow).is_empty(), "off the rows");
+        // A Shift click on the pointed row sends there and saves it.
+        flow.point(2, true);
+        assert_eq!(
+            flow.click(super::super::surface::Id::Row(2), 0.5),
+            [Action::Send {
+                to: "HOME".into(),
+                always: Some("example.com".into())
+            }]
+        );
+        // In the search the highlight follows the pointer, and the arrows
+        // and ⇧⏎ go on from it.
+        let mut flow = Flow::new();
+        flow.input(Input::Routed(guess()), 0.0);
+        flow.point(1, true);
+        flow.input(Input::OpenList, 0.1);
+        flow.input(Input::Shift(true), 0.2);
+        assert_eq!(
+            names(&flow),
+            ["HEX"],
+            "the search starts on the pointed row"
+        );
+        flow.point(2, true);
+        assert_eq!(names(&flow), ["HOME"]);
+        flow.input(Input::Move(-1), 0.3);
+        assert_eq!(names(&flow), ["HEX"], "the arrows take over");
+        assert_eq!(
+            flow.input(Input::Send { always: true }, 0.4),
+            [Action::Send {
+                to: "HEX".into(),
+                always: Some("example.com".into())
             }]
         );
     }
@@ -2689,7 +2835,7 @@ mod tests {
             actions,
             vec![Action::Send {
                 to: "SEER".into(),
-                always: Some("problems.kitlangton.com".into())
+                always: Some("example.com".into())
             }]
         );
         let shown = done(&flow, 1.0);
@@ -2818,7 +2964,7 @@ mod tests {
             flow.input(Input::Send { always: true }, 1.0),
             [Action::Send {
                 to: "ses_hex".into(),
-                always: Some("problems.kitlangton.com".into())
+                always: Some("example.com".into())
             }]
         );
         assert_eq!(done(&flow, 1.0).why.as_deref(), Some("always"));
@@ -2832,7 +2978,7 @@ mod tests {
             flow.input(Input::Send { always: true }, 2.0),
             [Action::Send {
                 to: "ses_hex".into(),
-                always: Some("problems.kitlangton.com".into())
+                always: Some("example.com".into())
             }]
         );
     }
@@ -3070,7 +3216,7 @@ mod tests {
         flow.input(Input::Permission(screen, Grant::Ready), 0.5);
         assert_eq!(flow.pres(0.5), Pres::Hidden);
 
-        flow.input(Input::NeedsPermission(screen), 1.0);
+        flow.input(Input::NeedsPermission(screen, AskedBy::Capture), 1.0);
         let shown = done(&flow, 1.0);
         assert_eq!(shown.lead, Lead::Warning);
         assert_eq!(shown.text, "Hex needs Screen Recording");
@@ -3082,7 +3228,7 @@ mod tests {
         // Still off: it waits on System Settings, and the shortcut again
         // leaves it as it stands.
         flow.input(Input::Permission(screen, Grant::Off), 3.0);
-        flow.input(Input::NeedsPermission(screen), 4.0);
+        flow.input(Input::NeedsPermission(screen, AskedBy::Capture), 4.0);
         let waiting = done(&flow, 4.0);
         assert_eq!(
             waiting.why.as_deref(),
@@ -3109,16 +3255,65 @@ mod tests {
         assert_eq!(flow.pres(64.0), Pres::Hidden);
 
         // Unanswered, it folds; ✕ closes it at once.
-        flow.input(Input::NeedsPermission(CaptureNeed::Microphone), 70.0);
+        flow.input(
+            Input::NeedsPermission(CaptureNeed::Microphone, AskedBy::Capture),
+            70.0,
+        );
         assert_eq!(done(&flow, 70.0).text, "Hex needs Microphone");
         assert!(flow.tick(70.0 + PERMISSION_HOLD_S));
         assert_eq!(flow.pres(70.0 + PERMISSION_HOLD_S), Pres::Hidden);
-        flow.input(Input::NeedsPermission(screen), 300.0);
+        flow.input(Input::NeedsPermission(screen, AskedBy::Capture), 300.0);
         flow.click(Id::Close, 301.0);
         assert_eq!(flow.pres(301.0), Pres::Hidden);
         // A capture that starts takes its place.
-        flow.input(Input::NeedsPermission(screen), 302.0);
+        flow.input(Input::NeedsPermission(screen, AskedBy::Capture), 302.0);
         flow.input(Input::Stage(Stage::Recording), 303.0);
         assert!(matches!(flow.pres(303.0), Pres::Recording { .. }));
+    }
+
+    /// Labs › Screenshots' permission helper returns to its picker in the
+    /// mode its shortcut asked for, never to Annotate's whole-screen
+    /// recording. Annotate's own helper still records.
+    #[test]
+    fn a_granted_screenshots_permission_reopens_its_picker() {
+        use super::super::surface::Id;
+        let screen = CaptureNeed::ScreenRecording;
+        for (record, action) in [
+            (true, Action::OpenScreenshots { record: true }),
+            (false, Action::OpenScreenshots { record: false }),
+        ] {
+            let mut flow = Flow::new();
+            flow.input(
+                Input::NeedsPermission(screen, AskedBy::Screenshots { record }),
+                1.0,
+            );
+            assert_eq!(done(&flow, 1.0).text, "Hex needs Screen Recording");
+            flow.input(Input::Permission(screen, Grant::Ready), 2.0);
+            assert_eq!(flow.click(Id::Ask, 3.0), vec![action]);
+            assert_eq!(flow.pres(3.0), Pres::Hidden, "the helper folds");
+        }
+
+        // The newest ask is what the grant returns to: Annotate asked
+        // first, then the record shortcut.
+        let mut flow = Flow::new();
+        flow.input(Input::NeedsPermission(screen, AskedBy::Capture), 1.0);
+        flow.input(
+            Input::NeedsPermission(screen, AskedBy::Screenshots { record: true }),
+            2.0,
+        );
+        flow.input(Input::Permission(screen, Grant::Ready), 3.0);
+        assert_eq!(
+            flow.click(Id::Ask, 4.0),
+            vec![Action::OpenScreenshots { record: true }]
+        );
+        // The other way round, Annotate records its own capture.
+        let mut flow = Flow::new();
+        flow.input(
+            Input::NeedsPermission(screen, AskedBy::Screenshots { record: false }),
+            1.0,
+        );
+        flow.input(Input::NeedsPermission(screen, AskedBy::Capture), 2.0);
+        flow.input(Input::Permission(screen, Grant::Ready), 3.0);
+        assert_eq!(flow.click(Id::Ask, 4.0), vec![Action::Record(Mode::Screen)]);
     }
 }

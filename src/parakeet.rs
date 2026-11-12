@@ -19,7 +19,7 @@ use crate::paste::{PasteMode, Paster};
 use crate::suppression::InputActivity;
 use crate::transcription::WarmTranscriber;
 use crate::transcription::engine::{PendingTranscript, TranscriptionEngine};
-use crate::transcription::gguf_session::OfflineGgufSession;
+use crate::transcription::gguf_session::{OfflineGgufSession, output_truncated};
 use crate::transcription::models::{
     TranscriptionModelId, TranscriptionSelection, model_path, validate,
 };
@@ -69,6 +69,11 @@ impl DictationJobId {
     pub const fn value(self) -> u64 {
         self.0
     }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u64) -> Self {
+        Self(value)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +91,13 @@ pub enum PasteKind {
 #[derive(Clone, Copy, Debug)]
 pub enum TranscriptionTarget {
     Paste,
+    /// A recording microphone interrupted a shortcut dictation: processed
+    /// like a paste, but copied to the clipboard instead of pasted, still
+    /// available to Paste Last Dictation and kept in History.
+    CopyOnlyPaste,
+    /// The same interrupted recording from Dictate without processing: copied
+    /// as heard, skipping the Output pane's steps.
+    RawCopyOnlyPaste,
     /// Dictate without processing: pasted as heard, skipping the Output
     /// pane's steps.
     RawPaste,
@@ -106,6 +118,11 @@ struct InferenceJob {
     prepare_ms: u128,
     target: TranscriptionTarget,
     context: ContextSnapshot,
+    /// Labs › Return to app: the app the capture started in, which the
+    /// paste returns to (macOS).
+    return_to: Option<i32>,
+    /// The language the model was asked for at submission.
+    language: String,
     /// The clip, kept for History while Labs › Keep recordings is on.
     recording: Option<crate::history::Recording>,
 }
@@ -116,6 +133,8 @@ struct ProcessorJob {
     target: TranscriptionTarget,
     text: String,
     context: ContextSnapshot,
+    return_to: Option<i32>,
+    language: String,
     timings: JobTimings,
     recording: Option<crate::history::Recording>,
 }
@@ -132,9 +151,15 @@ struct JobTimings {
 
 struct CompletedTranscript {
     text: String,
+    /// Labs › Voice prompt asked for nothing: finish without output even if
+    /// some later stage left text behind.
+    nothing: bool,
     /// Corrected local transcript before mode processing.
     raw: String,
     application: Option<String>,
+    /// Labs › Return to app: the app the capture started in, which the
+    /// paste returns to (macOS).
+    return_to: Option<i32>,
     timings: JobTimings,
     processing: Option<ProcessingObservation>,
     recording: Option<crate::history::Recording>,
@@ -242,6 +267,9 @@ struct WorkerState {
     next_sequence: u64,
     jobs: BTreeMap<DictationJobId, Arc<JobControl>>,
     pending_pastes: usize,
+    /// Labs › Return to app: the app in front when the capture started,
+    /// which its output returns to (macOS).
+    return_to: Option<i32>,
 }
 
 impl WorkerState {
@@ -271,23 +299,40 @@ impl DictationWorker {
             next_sequence: 0,
             jobs: BTreeMap::new(),
             pending_pastes: 0,
+            return_to: None,
         }));
 
-        let engine = match TranscriptionEngine::start(WarmTranscriber::default()) {
+        let (_, selection) = crate::app_settings::transcription_selection();
+        // Labs › Unload model when idle parks a GGUF model at launch too:
+        // the first dictation reloads it, so memory stays free until then.
+        // Apple Speech holds no model of Hex's and stays loaded.
+        let parked = crate::labs::unload_idle().is_some()
+            && matches!(
+                validate(&selection).map(|definition| definition.runtime),
+                Ok(crate::transcription::models::ModelRuntime::Gguf(_))
+            );
+        let engine = if parked {
+            TranscriptionEngine::start_parked(selection)
+        } else {
+            TranscriptionEngine::start(WarmTranscriber::default())
+        };
+        let engine = match engine {
             Ok(engine) => {
-                let events = event_sender.clone();
-                let _ = engine.run(move |model| {
-                    prioritize_inference_thread();
-                    match WarmTranscriber::load() {
-                        Ok(loaded) => {
-                            tracing::info!("transcription model loaded");
-                            *model = loaded;
+                if !parked {
+                    let events = event_sender.clone();
+                    let _ = engine.run(move |model| {
+                        prioritize_inference_thread();
+                        match WarmTranscriber::load() {
+                            Ok(loaded) => {
+                                tracing::info!("transcription model loaded");
+                                *model = loaded;
+                            }
+                            Err(error) => {
+                                let _ = events.send(WorkerEvent::ModelFailed(error.to_string()));
+                            }
                         }
-                        Err(error) => {
-                            let _ = events.send(WorkerEvent::ModelFailed(error.to_string()));
-                        }
-                    }
-                });
+                    });
+                }
                 let engine = Arc::new(engine);
                 engine.share();
                 Some(engine)
@@ -336,6 +381,15 @@ impl DictationWorker {
         }
     }
 
+    /// Labs › Return to app (macOS): remembers the app in front as this
+    /// capture starts, so its paste can bring it back. Read only while the
+    /// lab is on, and never Hex itself.
+    pub fn remember_return_to_app(&self) {
+        let return_to = crate::paste::return_to_app::capture_start();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.return_to = return_to;
+    }
+
     /// Hands the clip to the engine at once, so its live stream finishes
     /// before any later capture begins one; the job then waits in order.
     pub fn transcribe(
@@ -373,6 +427,14 @@ impl DictationWorker {
     ) -> Result<DictationJobId, &'static str> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let job_id = DictationJobId(state.next_output_sequence()?);
+        // Labs › Return to app: only a paste returns to an app; a printing
+        // stop and the service never paste.
+        let return_to = matches!(
+            target,
+            TranscriptionTarget::Paste | TranscriptionTarget::RawPaste
+        )
+        .then(|| state.return_to.take())
+        .flatten();
         let (Some(engine), Some(jobs)) = (&self.engine, &self.inference_jobs) else {
             return Err("dictation worker is unavailable");
         };
@@ -381,9 +443,16 @@ impl DictationWorker {
             ..JobControl::default()
         });
         let (_, selection) = crate::app_settings::transcription_selection();
+        let language = selection.language.clone();
         let submitted_at = Instant::now();
         let audio_ms = clip.duration_ms();
-        let stream = clip.take_stream();
+        // Labs › Screen vocabulary: this capture's terms belong to its
+        // whole-clip run and no other job. Only a model that reads the terms
+        // gives up its live stream, whose vocabulary is fixed when it starts
+        // (before the window was read); a model that ignores them keeps it.
+        let screen_terms = context.screen_terms.clone();
+        let keeps_stream = screen_terms.is_empty() || !crate::dictation::vocabulary::uses_terms();
+        let stream = clip.take_stream().filter(|_| keeps_stream);
         let _capture = clip.take_capture_marker();
         let samples = clip.into_transcription_samples();
         crate::dictation::diagnostics::persist(&samples);
@@ -402,9 +471,10 @@ impl DictationWorker {
                 let transcriber = model
                     .activate(&selection)
                     .map_err(|error| error.to_string())?;
-                transcriber
-                    .transcribe(samples)
-                    .map_err(|error| error.to_string())
+                crate::dictation::vocabulary::for_capture(&screen_terms, || {
+                    transcriber.transcribe(samples)
+                })
+                .map_err(|error| error.to_string())
             })
         };
         let transcript = engine
@@ -419,6 +489,8 @@ impl DictationWorker {
             prepare_ms,
             target,
             context,
+            return_to,
+            language,
             recording,
         })
         .map(|()| {
@@ -581,7 +653,12 @@ fn run_processor_worker(
                     stage: DictationJobStage::Processing,
                 });
             });
-        processed.apply_transformations(transformations, &job.context, &job.control.cancelled);
+        processed.apply_transformations(
+            transformations,
+            &job.context,
+            &job.control.cancelled,
+            crate::dictation::processor::Source::Dictation,
+        );
         if job.control.is_cancelled() {
             let _ = output.send(OutputJob::Cancelled { job_id: job.job_id });
             continue;
@@ -602,8 +679,10 @@ fn run_processor_worker(
                 target: job.target,
                 result: Box::new(Ok(CompletedTranscript {
                     text: processed.text,
+                    nothing: processed.nothing,
                     raw: job.text,
                     application: job.context.application,
+                    return_to: job.return_to,
                     timings: job.timings,
                     processing: processed.observation,
                     recording: job.recording,
@@ -623,10 +702,25 @@ fn process_job_text(
     processing: impl FnOnce(),
 ) -> crate::dictation::processor::Processed {
     let profiles = profiles();
-    if profiles.processes(&job.context) {
+    // A voice prompt can run a request even when the mode's own rewrite and
+    // transformations are off, so the HUD shows its stage too.
+    if profiles.processes(&job.context)
+        || profiles.voice_prompts(
+            &job.text,
+            &job.language,
+            &job.context,
+            crate::dictation::processor::Source::Dictation,
+        )
+    {
         processing();
     }
-    profiles.process_cancellable(&job.text, &job.context, &job.control.cancelled)
+    profiles.process_cancellable(
+        &job.text,
+        &job.language,
+        &job.context,
+        &job.control.cancelled,
+        crate::dictation::processor::Source::Dictation,
+    )
 }
 
 /// The longest audio the capture path hands the model at once; longer
@@ -791,7 +885,9 @@ fn run_inference_worker(
             Ok(text)
                 if matches!(
                     target,
-                    TranscriptionTarget::Paste | TranscriptionTarget::Print
+                    TranscriptionTarget::Paste
+                        | TranscriptionTarget::CopyOnlyPaste
+                        | TranscriptionTarget::Print
                 ) && !text.trim().is_empty() =>
             {
                 if processor_jobs
@@ -801,6 +897,8 @@ fn run_inference_worker(
                         target,
                         text,
                         context: job.context,
+                        return_to: job.return_to,
+                        language: job.language,
                         timings,
                         recording: job.recording,
                     })
@@ -815,7 +913,9 @@ fn run_inference_worker(
                 let result = result.map(|text| CompletedTranscript {
                     raw: text.clone(),
                     text,
+                    nothing: false,
                     application,
+                    return_to: job.return_to,
                     timings,
                     processing: None,
                     recording,
@@ -966,18 +1066,49 @@ fn finish_output(
                     return Err("dictation was cancelled".into());
                 }
                 let paste_started = Instant::now();
-                if !completed.text.trim().is_empty() {
+                if !completed.nothing && !completed.text.trim().is_empty() {
                     let commit = || control.begin_output();
                     match target {
-                        TranscriptionTarget::Paste | TranscriptionTarget::RawPaste => {
+                        TranscriptionTarget::Paste
+                        | TranscriptionTarget::CopyOnlyPaste
+                        | TranscriptionTarget::RawCopyOnlyPaste
+                        | TranscriptionTarget::RawPaste => {
                             // Labs › Copy dictation only, read as the output
                             // commits: dictations go to the clipboard
                             // unpasted; Paste last dictation still pastes.
-                            let mode = if crate::labs::copy_only() {
+                            // A rescued microphone-loss dictation is always
+                            // copied: the disruption may have taken focus.
+                            let mode = if crate::labs::copy_only()
+                                || matches!(
+                                    target,
+                                    TranscriptionTarget::CopyOnlyPaste
+                                        | TranscriptionTarget::RawCopyOnlyPaste
+                                )
+                            {
                                 PasteMode::CopyOnly
                             } else {
                                 PasteMode::Continue
                             };
+                            // Labs › Return to app: the app the capture
+                            // started in comes back first. When it can't,
+                            // nothing is pasted; the text stays for Paste
+                            // last dictation, and History keeps only pasted
+                            // output, as on any failed paste. A cancelled job
+                            // leaves the last result alone, as it does
+                            // everywhere else.
+                            if matches!(mode, PasteMode::Continue)
+                                && let Err(error) =
+                                    crate::paste::return_to_app::bring_to_front(completed.return_to)
+                            {
+                                if !control.is_cancelled() {
+                                    *last_transcript = Some(completed.text.clone());
+                                }
+                                tracing::warn!(
+                                    %error,
+                                    "a dictation found another app in front and couldn't return to its own"
+                                );
+                                return Err(error.to_string());
+                            }
                             paste(&completed.text, mode, &commit)
                         }
                         TranscriptionTarget::Service
@@ -989,7 +1120,10 @@ fn finish_output(
                     .map_err(|error| error.to_string())?;
                     if matches!(
                         target,
-                        TranscriptionTarget::Paste | TranscriptionTarget::RawPaste
+                        TranscriptionTarget::Paste
+                            | TranscriptionTarget::CopyOnlyPaste
+                            | TranscriptionTarget::RawCopyOnlyPaste
+                            | TranscriptionTarget::RawPaste
                     ) {
                         *last_transcript = Some(completed.text.clone());
                     }
@@ -1062,8 +1196,8 @@ fn record_history(
     completed: &mut CompletedTranscript,
 ) {
     let kind = match target {
-        TranscriptionTarget::Paste => HistoryKind::Dictation,
-        TranscriptionTarget::RawPaste => HistoryKind::Raw,
+        TranscriptionTarget::Paste | TranscriptionTarget::CopyOnlyPaste => HistoryKind::Dictation,
+        TranscriptionTarget::RawPaste | TranscriptionTarget::RawCopyOnlyPaste => HistoryKind::Raw,
         TranscriptionTarget::Print | TranscriptionTarget::RawPrint => HistoryKind::Printed,
         TranscriptionTarget::Service => return,
     };
@@ -1252,9 +1386,26 @@ impl Parakeet {
         let started = Instant::now();
         let mut silence = Vec::new();
         pad_for_parakeet(&mut silence);
-        self.session
-            .prewarm(&silence, &self.options)
-            .wrap_err("could not prewarm transcription model")?;
+        // No vocabulary: with it, a decoder such as Qwen3-ASR 1.7B reads a
+        // long term list back to its output cap on every warm-up (#1568).
+        let result = self
+            .session
+            .warm(&silence, &self.options)
+            .map(drop)
+            .wrap_err("could not prewarm transcription model");
+        match result {
+            // Backstop: a decode that still runs to its generation cap on
+            // silence (Qwen3-ASR 1.7B, #968) ran the whole graph on the
+            // device, so that is a warm model, not a failed selection; Linux
+            // and Windows accept it the same way.
+            Err(error) if output_truncated(&error) => {
+                tracing::info!(
+                    error = format!("{error:#}"),
+                    "the warm-up run on silence hit the output limit; the model is warm"
+                );
+            }
+            result => result?,
+        }
         tracing::info!(
             prewarm_ms = started.elapsed().as_millis(),
             "prewarmed transcription model"
@@ -1286,6 +1437,22 @@ impl Parakeet {
             .transcribe_chunked(samples, &self.options, self.max_audio_samples)
     }
 
+    /// [`Self::transcribe`] with the model's own segment and word times,
+    /// chunked and offset exactly as the untimed run chunks it.
+    pub(crate) fn transcribe_timed(
+        &mut self,
+        samples: &[f32],
+    ) -> Result<crate::transcription::transcript::Transcript> {
+        self.session
+            .transcribe_chunked_timed(samples, &self.options, self.max_audio_samples)
+    }
+
+    /// The finest native timings this model gives, as a timed request needs
+    /// them. Never the level a caller asked for.
+    pub(crate) fn timestamps(&self) -> crate::transcription::transcript::TimestampLevel {
+        crate::transcription::gguf_session::timestamp_level(self.options.timestamps)
+    }
+
     pub fn transcribe_segments(&mut self, samples: &[f32]) -> Result<Transcript> {
         self.session
             .run(samples, &self.options)
@@ -1311,6 +1478,8 @@ mod tests {
             target,
             text: "raw instruction".into(),
             context: ContextSnapshot::default(),
+            return_to: None,
+            language: "en".into(),
             timings: JobTimings {
                 total_started: Instant::now(),
                 queue_ms: 0,
@@ -1461,6 +1630,82 @@ mod tests {
     }
 
     #[test]
+    fn a_salvaged_dictation_is_copied_and_kept_for_paste_last_and_history() {
+        // A normal salvage is processed before it is copied; a raw one is
+        // copied as heard and recorded as raw history. Neither is pasted.
+        for (target, kind) in [
+            (TranscriptionTarget::CopyOnlyPaste, HistoryKind::Dictation),
+            (TranscriptionTarget::RawCopyOnlyPaste, HistoryKind::Raw),
+        ] {
+            let directory = std::env::temp_dir().join(format!(
+                "hex-parakeet-salvage-{}-{target:?}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let history = History::new(crate::history::HistoryStore::open(
+                directory.join("history.json"),
+                crate::history::HistoryRetention::Week,
+                crate::history::now_ms(),
+            ));
+            let text = "the part of the dictation the microphone heard";
+            let mut pasted = None;
+            let mut last_transcript = None;
+            let event = finish_output(
+                OutputJob::Completed {
+                    job_id: DictationJobId(1),
+                    control: Arc::new(JobControl::default()),
+                    target,
+                    result: Box::new(Ok(CompletedTranscript {
+                        text: text.into(),
+                        nothing: false,
+                        raw: text.into(),
+                        application: Some("Call".into()),
+                        return_to: None,
+                        timings: JobTimings {
+                            total_started: Instant::now(),
+                            queue_ms: 0,
+                            audio_ms: 4_000,
+                            prepare_ms: 0,
+                            inference_ms: 0,
+                        },
+                        processing: None,
+                        recording: None,
+                    })),
+                },
+                &mut |pasted_text, mode, commit| {
+                    assert!(commit());
+                    pasted = Some((pasted_text.to_string(), mode));
+                    Ok(())
+                },
+                &mut last_transcript,
+                Some(&history),
+            );
+
+            assert!(matches!(
+                event,
+                WorkerEvent::Completed {
+                    result: Ok(ref completed),
+                    ..
+                } if completed.as_str() == text
+            ));
+            let (pasted_text, mode) = pasted.expect("the transcript reaches the clipboard");
+            assert_eq!(pasted_text, text);
+            assert!(
+                matches!(mode, PasteMode::CopyOnly),
+                "{target:?}: an interrupted dictation is copied, never pasted"
+            );
+            assert_eq!(last_transcript.as_deref(), Some(text));
+            let entries = history.recent(1);
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].kind, kind, "{target:?}");
+            assert_eq!(entries[0].final_text, text);
+            assert_eq!(entries[0].application.as_deref(), Some("Call"));
+            let _ = std::fs::remove_dir_all(&directory);
+        }
+    }
+
+    #[test]
     fn parallel_processing_results_are_released_in_submission_order() {
         let mut outputs = OrderedOutputs::default();
         let job = |sequence| OutputJob::Paste {
@@ -1501,6 +1746,7 @@ mod tests {
                 next_sequence: 1,
                 jobs: BTreeMap::from([(DictationJobId(0), Arc::new(JobControl::default()))]),
                 pending_pastes: 0,
+                return_to: None,
             })),
             inference_worker: None,
             processor_workers: Vec::new(),

@@ -159,7 +159,12 @@ enum EscapeAction {
 }
 
 fn escape_action(popup: &Popup, snap: &Snapshot) -> EscapeAction {
-    if popup.query.preedit.is_some() {
+    escape_action_given(popup.query.preedit().is_some(), snap)
+}
+
+/// [`escape_action`] with the composition named, so tests can set one.
+fn escape_action_given(composing: bool, snap: &Snapshot) -> EscapeAction {
+    if composing {
         return EscapeAction::Ignore;
     }
     if snap.phase == Phase::OnlinePreview || snap.online_preview.is_some() {
@@ -360,9 +365,12 @@ mod tests {
 
     #[test]
     fn escape_ignores_ime_preedit() {
-        let mut popup = Popup::default();
-        popup.query.preedit = Some(("ni".into(), None));
+        let popup = Popup::default();
         let snap = super::super::fixtures::word();
-        assert!(matches!(escape_action(&popup, &snap), EscapeAction::Ignore));
+        assert!(matches!(
+            escape_action_given(true, &snap),
+            EscapeAction::Ignore
+        ));
+        assert!(matches!(escape_action(&popup, &snap), EscapeAction::Hide));
     }
 }

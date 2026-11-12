@@ -59,10 +59,12 @@ pub(super) fn query_field<S: 'static>(
 }
 
 pub(super) fn enter_submits(edit: &TextEdit, key_repeat: bool) -> bool {
-    edit.preedit.is_none()
-        && !key_repeat
-        && !edit.text.trim().is_empty()
-        && edit.text.chars().count() <= MAX_QUERY_CHARS
+    enter_submits_given(edit.preedit().is_none(), &edit.text, key_repeat)
+}
+
+/// [`enter_submits`] without the edit, so tests name an active composition.
+pub(super) fn enter_submits_given(composing: bool, text: &str, key_repeat: bool) -> bool {
+    !composing && !key_repeat && !text.trim().is_empty() && text.chars().count() <= MAX_QUERY_CHARS
 }
 
 pub(super) fn live_engine() -> bool {
@@ -91,7 +93,18 @@ pub(super) fn live_cancel() {
 /// survives a window switch. Defer only active IME composition, and retry
 /// after it ends without requiring another backend revision.
 pub(super) fn sync_query(edit: &mut TextEdit, revision: &mut u64, snap: &Snapshot) -> bool {
-    if edit.preedit.is_some() {
+    sync_query_given(edit, edit.preedit().is_some(), revision, snap)
+}
+
+/// [`sync_query`] with the composition named, so tests can set one: Rune's
+/// `TextEdit` only reads its input method state.
+pub(super) fn sync_query_given(
+    edit: &mut TextEdit,
+    composing: bool,
+    revision: &mut u64,
+    snap: &Snapshot,
+) -> bool {
+    if composing {
         return false;
     }
     let changed = *revision != snap.revision || edit.text != snap.text;
@@ -685,11 +698,9 @@ mod tests {
     #[test]
     fn enter_does_not_submit_ime_composition_or_repeat() {
         let mut edit = TextEdit::new("hex");
-        assert!(enter_submits(&edit, false));
-        assert!(!enter_submits(&edit, true));
-        edit.preedit = Some(("ni".into(), None));
-        assert!(!enter_submits(&edit, false));
-        edit.preedit = None;
+        assert!(enter_submits_given(false, &edit.text, false));
+        assert!(!enter_submits_given(false, &edit.text, true));
+        assert!(!enter_submits_given(true, &edit.text, false));
         edit.replace_text("");
         assert!(!enter_submits(&edit, false));
         edit.replace_text("a".repeat(MAX_QUERY_CHARS + 1));
@@ -706,14 +717,14 @@ mod tests {
         let mut snap = super::super::fixtures::word();
         snap.revision = 2;
         snap.text = "world".into();
-        assert!(sync_query(&mut query, &mut revision, &snap));
+        assert!(sync_query_given(&mut query, false, &mut revision, &snap));
         assert_eq!(query.text, "world");
         assert_eq!((query.anchor, query.focus), (1, 3));
         assert!(query.focused);
         assert_eq!(revision, 2);
-        assert!(!sync_query(&mut query, &mut revision, &snap));
+        assert!(!sync_query_given(&mut query, false, &mut revision, &snap));
         snap.text = "中".into();
-        assert!(sync_query(&mut query, &mut revision, &snap));
+        assert!(sync_query_given(&mut query, false, &mut revision, &snap));
         assert!(query.text.is_char_boundary(query.anchor));
         assert!(query.text.is_char_boundary(query.focus));
     }
@@ -721,17 +732,14 @@ mod tests {
     #[test]
     fn preedit_blocks_snapshot_replace() {
         let mut query = TextEdit::new("he");
-        query.preedit = Some(("llo".into(), None));
         let mut revision = 1;
         let mut snap = super::super::fixtures::word();
         snap.revision = 4;
         snap.text = "running".into();
-        sync_query(&mut query, &mut revision, &snap);
+        sync_query_given(&mut query, true, &mut revision, &snap);
         assert_eq!(query.text, "he");
-        assert!(query.preedit.is_some());
         assert_eq!(revision, 1);
-        query.preedit = None;
-        assert!(sync_query(&mut query, &mut revision, &snap));
+        assert!(sync_query_given(&mut query, false, &mut revision, &snap));
         assert_eq!(query.text, "running");
         assert_eq!(revision, 4);
     }

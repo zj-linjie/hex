@@ -73,7 +73,7 @@ impl Flow {
         match input {
             // A capture finishing without its screen: its capsule says
             // where it went first.
-            Input::NeedsPermission(need)
+            Input::NeedsPermission(need, asked_by)
                 if matches!(
                     self.phase,
                     Phase::Processing
@@ -83,12 +83,13 @@ impl Flow {
                         | Phase::Queued { .. }
                 ) =>
             {
-                self.helper_next = Some(need);
+                self.helper_next = Some((need, asked_by));
                 return actions;
             }
-            Input::NeedsPermission(need) => {
+            Input::NeedsPermission(need, asked_by) => {
                 self.helper_next = None;
-                // Pressed again while it's up: it stays as it stands.
+                // Pressed again while it's up: it stays as it stands, but
+                // the newest ask is what its grant returns to.
                 let grant = match &self.phase {
                     Phase::Permission {
                         need: shown, grant, ..
@@ -99,6 +100,7 @@ impl Flow {
                     need,
                     grant,
                     at: now,
+                    asked_by,
                 };
                 return actions;
             }
@@ -107,6 +109,7 @@ impl Flow {
                     need: shown,
                     grant: was,
                     at,
+                    ..
                 } = &mut self.phase
                 {
                     // Still off once Allow was pressed: it waits on System
@@ -256,10 +259,12 @@ impl Flow {
             }
             (Phase::Routed(mut routed), Input::OpenList) => {
                 match &mut routed.open {
+                    // The same rows: the highlight starts on the one the
+                    // pointer is on.
                     Some(open) if !open.typing => {
                         open.typing = true;
                         open.back = true;
-                        open.selected = 0;
+                        open.selected = open.pointed.unwrap_or(0);
                     }
                     Some(_) => {}
                     None => {
@@ -290,12 +295,15 @@ impl Flow {
                         _ => backspace(&mut open.query),
                     }
                     open.selected = 0;
+                    open.pointed = None;
                 }
                 Phase::Routed(routed)
             }
             (Phase::Routed(mut routed), Input::Move(by)) => {
+                // The arrows take over from the pointer, from where it was.
                 if let Some(open) = &mut routed.open {
                     open.selected = (open.selected as i64 + i64::from(by)).max(0) as usize;
+                    open.pointed = None;
                 }
                 clamp(&mut routed);
                 Phase::Routed(routed)
@@ -317,6 +325,7 @@ impl Flow {
                     let rows = rows as i64;
                     open.selected =
                         (open.selected as i64 + i64::from(by)).rem_euclid(rows) as usize;
+                    open.pointed = None;
                 }
                 Phase::Routed(routed)
             }

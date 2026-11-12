@@ -1031,16 +1031,22 @@ fn clean_google_meet_title(title: &str) -> String {
     cleaned.to_string()
 }
 
-/// A Meet call's code from its address: the first path segment, so query
-/// strings (`?authuser=0`) never make one call look like two.
+/// A Meet call's code from its address: the path segment shaped like one, so
+/// query strings (`?authuser=0`) and the `/meet/` prefix Arc adds when it
+/// opens a Calendar link never make one call look like two. A nickname path
+/// without a code-shaped segment (`/team-sync`) is its own code, as before.
 fn google_meet_url_code(url: &Url) -> Option<String> {
-    let code = url
-        .path()
-        .trim_matches('/')
-        .split('/')
-        .next()?
-        .to_ascii_lowercase();
-    (!code.is_empty()).then_some(code)
+    let mut fallback = None;
+    for segment in url.path_segments()?.map(str::to_ascii_lowercase) {
+        if segment.is_empty() {
+            continue;
+        }
+        if is_google_meet_code(&segment) {
+            return Some(segment);
+        }
+        fallback.get_or_insert(segment);
+    }
+    fallback
 }
 
 /// A Meet call's code from a tab title that shows only the code
@@ -1099,6 +1105,7 @@ mod tests {
             browser_url: url.map(|url| Url::parse(url).unwrap()),
             window_title: Some(title.into()),
             input_revision: None,
+            screen_terms: Vec::new(),
         }
     }
 
@@ -1867,6 +1874,44 @@ mod tests {
     }
 
     #[test]
+    fn extracts_a_meet_code_from_a_meet_prefixed_address() {
+        let plain = Url::parse("https://meet.google.com/abc-defg-hij?authuser=0").unwrap();
+        assert_eq!(
+            google_meet_url_code(&plain).as_deref(),
+            Some("abc-defg-hij")
+        );
+
+        // Arc opens a Calendar link as `/meet/<code>?authuser=…`; the prefix
+        // is not the call's code.
+        let prefixed = Url::parse("https://meet.google.com/meet/abc-defg-hij?authuser=0").unwrap();
+        assert_eq!(
+            google_meet_url_code(&prefixed).as_deref(),
+            Some("abc-defg-hij")
+        );
+
+        // Uppercase still names the same code, and a fragment is ignored.
+        let uppercase = Url::parse("https://meet.google.com/meet/ABC-DEFG-HIJ#fragment").unwrap();
+        assert_eq!(
+            google_meet_url_code(&uppercase).as_deref(),
+            Some("abc-defg-hij")
+        );
+
+        // A nickname path without a code-shaped segment is its own code, as
+        // before; only a path with no segment at all names none.
+        for (address, code) in [
+            ("https://meet.google.com/team-sync", Some("team-sync")),
+            ("https://meet.google.com/lookup", Some("lookup")),
+            ("https://meet.google.com/", None),
+        ] {
+            assert_eq!(
+                google_meet_url_code(&Url::parse(address).unwrap()).as_deref(),
+                code,
+                "{address}"
+            );
+        }
+    }
+
+    #[test]
     fn switching_tabs_during_a_snoozed_browser_call_does_not_re_offer() {
         let brave = ActiveMicrophoneApplication {
             pid: 1592,
@@ -1932,6 +1977,37 @@ mod tests {
     }
 
     #[test]
+    fn meet_prefixed_addresses_are_snoozed_by_their_own_codes() {
+        let first = meet_in_brave(
+            "https://meet.google.com/meet/abc-defg-hij?authuser=0",
+            "Meet - Design sync",
+        );
+        let again = meet_in_brave(
+            "https://meet.google.com/meet/abc-defg-hij?authuser=1",
+            "Meet - Design sync",
+        );
+        let second = meet_in_brave(
+            "https://meet.google.com/meet/xyz-wxyz-xyz?authuser=0",
+            "Meet - Standup",
+        );
+        assert_eq!(first.call.as_deref(), Some("abc-defg-hij"));
+        assert_eq!(second.call.as_deref(), Some("xyz-wxyz-xyz"));
+
+        let mut watch = Watch::new();
+        assert_eq!(
+            watch.stable(&first, &[]),
+            Some(Detection::Offer(first.clone()))
+        );
+        assert!(!watch.detector.is_application_snoozed("com.brave.Browser"));
+        // The same call under another account is still snoozed.
+        assert!(watch.run(Some(&again), &[], 5_000).is_empty());
+        // The first call ended without a stop by hand, so only its different
+        // code lets the next one through after a short gap (#1594).
+        assert!(watch.run(None, &[], 2_000).is_empty());
+        assert_eq!(watch.stable(&second, &[]), Some(Detection::Offer(second)));
+    }
+
+    #[test]
     fn a_stopped_call_s_app_is_snoozed_only_until_it_leaves_for_a_few_seconds() {
         let slack = slack_huddle();
         let mut watch = Watch::new();
@@ -1991,16 +2067,13 @@ mod tests {
     fn offer_titles_name_the_service_site_or_browser_without_repeating_call() {
         let problems = context(
             "Brave Browser",
-            Some("https://www.problems.kitlangton.com/board"),
+            Some("https://www.example.com/board"),
             "Problems",
         );
         let site = candidate_from_microphone(&brave(), &problems).unwrap();
         assert_eq!(site.source, MeetingSource::BrowserCall);
-        assert_eq!(site.offer_title(), "Call on problems.kitlangton.com");
-        assert_eq!(
-            site.recording_start().app.as_deref(),
-            Some("problems.kitlangton.com")
-        );
+        assert_eq!(site.offer_title(), "Call on example.com");
+        assert_eq!(site.recording_start().app.as_deref(), Some("example.com"));
 
         let unknown = candidate_from_microphone(&brave(), &ContextSnapshot::default()).unwrap();
         assert_eq!(unknown.offer_title(), "Call in Brave Browser");
@@ -2038,14 +2111,10 @@ mod tests {
 
     #[test]
     fn choices_apply_to_the_site_when_known_and_the_app_otherwise() {
-        let problems = context(
-            "Brave Browser",
-            Some("https://problems.kitlangton.com/"),
-            "Problems",
-        );
+        let problems = context("Brave Browser", Some("https://example.com/"), "Problems");
         let site = candidate_from_microphone(&brave(), &problems).unwrap();
         let provider = site.provider(false).unwrap();
-        assert_eq!(provider.key, "problems.kitlangton.com");
+        assert_eq!(provider.key, "example.com");
         assert_eq!(
             site.policy(&[provider.choose(MeetingPolicy::NeverOffer)]),
             MeetingPolicy::NeverOffer
@@ -2059,7 +2128,7 @@ mod tests {
             ("com.brave.Browser", "Brave Browser")
         );
         assert!(!unknown.can_always_record(false));
-        let never_site = [choice("problems.kitlangton.com", MeetingPolicy::NeverOffer)];
+        let never_site = [choice("example.com", MeetingPolicy::NeverOffer)];
         assert_eq!(unknown.policy(&never_site), MeetingPolicy::Ask);
         // A browser's choice covers its sites unless the site has its own.
         let never_brave = choice("com.brave.Browser", MeetingPolicy::NeverOffer);
@@ -2070,16 +2139,13 @@ mod tests {
         assert_eq!(
             site.policy(&[
                 never_brave.clone(),
-                choice("problems.kitlangton.com", MeetingPolicy::AlwaysRecord)
+                choice("example.com", MeetingPolicy::AlwaysRecord)
             ]),
             MeetingPolicy::AlwaysRecord
         );
         // A site set back to Ask asks, whatever its browser's choice.
         assert_eq!(
-            site.policy(&[
-                never_brave,
-                choice("problems.kitlangton.com", MeetingPolicy::Ask)
-            ]),
+            site.policy(&[never_brave, choice("example.com", MeetingPolicy::Ask)]),
             MeetingPolicy::Ask
         );
 
@@ -2142,17 +2208,10 @@ mod tests {
         // Browser pages still need about 20 s on the microphone.
         let problems = candidate_from_microphone(
             &brave(),
-            &context(
-                "Brave Browser",
-                Some("https://problems.kitlangton.com/"),
-                "Problems",
-            ),
+            &context("Brave Browser", Some("https://example.com/"), "Problems"),
         )
         .unwrap();
-        let always = [choice(
-            "problems.kitlangton.com",
-            MeetingPolicy::AlwaysRecord,
-        )];
+        let always = [choice("example.com", MeetingPolicy::AlwaysRecord)];
         let mut watch = Watch::new();
         assert!(watch.run(Some(&problems), &always, 6_000).is_empty());
         assert!(watch.run(None, &always, 5_000).is_empty());
@@ -2205,11 +2264,7 @@ mod tests {
 
     #[test]
     fn a_browser_voice_note_is_not_offered_but_a_sustained_browser_call_is() {
-        let problems = context(
-            "Brave Browser",
-            Some("https://problems.kitlangton.com/"),
-            "Problems",
-        );
+        let problems = context("Brave Browser", Some("https://example.com/"), "Problems");
         let candidate = candidate_from_microphone(&brave(), &problems).unwrap();
         let mut watch = Watch::new();
         // A six-second voice note, then the mic closes for a few seconds.
@@ -2354,16 +2409,12 @@ mod tests {
         // shorten the threshold nor trigger Always record.
         let problems = candidate_from_microphone(
             &brave(),
-            &context(
-                "Brave Browser",
-                Some("https://problems.kitlangton.com/"),
-                "Problems",
-            ),
+            &context("Brave Browser", Some("https://example.com/"), "Problems"),
         )
         .unwrap();
         let choices = [
             choice("banshee.app", MeetingPolicy::AlwaysRecord),
-            choice("problems.kitlangton.com", MeetingPolicy::NeverOffer),
+            choice("example.com", MeetingPolicy::NeverOffer),
         ];
         let mut watch = Watch::new();
         assert!(watch.run(Some(&problems), &choices, 25_000).is_empty());

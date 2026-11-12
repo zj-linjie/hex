@@ -201,6 +201,10 @@ impl Pump {
             ControlCommand::Dictation { .. } | ControlCommand::PasteLast => {
                 unreachable!("listener_command answers it")
             }
+            ControlCommand::TypedText => Some(ControlReply::error(
+                "unsupported",
+                "Transform typed text is Linux only",
+            )),
             ControlCommand::Screenshot { pick } => screenshot(pick, reply),
             ControlCommand::MeetingRecord { title } => self.meeting(false, title, reply),
             ControlCommand::MeetingStop => self.meeting(true, None, reply),
@@ -591,19 +595,30 @@ fn listener_command(
             raw,
         } => background(reply, move || {
             let action = control::check_flags(action, true, raw)?;
+            let printing_start = action == control::CaptureAction::Start;
+            if printing_start && !crate::labs::print_start() {
+                return Err(control::ControlError::new(
+                    "disabled",
+                    "Labs › Print-only CLI dictation is off; turn it on with \
+                     `hex labs on print-start`",
+                ));
+            }
             listener_ready(&runtime)?;
             let (print, printed) = control::PrintReply::channel();
-            // The listener answers once the recording stopped; only this
-            // command then waits for the transcript.
+            // A printing start answers only when its dictation ends; a
+            // printing stop answers once the recording stopped.
+            let wait = if printing_start {
+                control::PRINT_START_WAIT
+            } else {
+                control::PRINT_WAIT
+            };
             match ask(&runtime, |reply| RecognitionControl::Capture {
                 action,
                 print: Some(print),
-                raw: false,
+                raw: printing_start && raw,
                 reply,
             })? {
-                ControlReply::Done { .. } => {
-                    Ok(control::await_printed(&printed, control::PRINT_WAIT))
-                }
+                ControlReply::Done { .. } => Ok(control::await_printed(&printed, wait)),
                 refused => Ok(refused),
             }
         }),
@@ -817,7 +832,7 @@ fn wait_for_model(
 ) -> Result<ControlReply, ControlError> {
     let name = crate::transcription::models::definition(selection.model).name;
     let matches = |settings: &AppSettings| {
-        super::same_model_and_language(&settings.transcription, &selection)
+        super::runtime::same_model_and_language(&settings.transcription, &selection)
     };
     if load().is_ok_and(|settings| matches(&settings)) {
         return Ok(ControlReply::unchanged(format!(
@@ -1013,16 +1028,21 @@ mod tests {
                 Ok(())
             },
         ));
-        let mut runtime = super::super::Runtime {
+        let mut runtime = super::super::runtime::Runtime {
             settings: Default::default(),
             keyboard_switcher: crate::transcription::keyboard_model_switching::Switcher::new(
                 Default::default(),
                 None,
             ),
+            app_switcher: crate::transcription::app_model_switching::Switcher::new(false, None),
             automatic_preparation: false,
             preparation,
             recognition_start: None,
             listener_failure: Default::default(),
+            event_reader: crate::desktop::events::EventReader::open(""),
+            activity: Default::default(),
+            last_completed_at: None,
+            started_at: 0,
         };
         let selection = TranscriptionSelection {
             model: TranscriptionModelId::WhisperLargeV3Turbo,

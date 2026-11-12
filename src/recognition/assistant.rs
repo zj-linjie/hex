@@ -71,7 +71,7 @@ pub(super) fn assistant_start(
     busy: bool,
     started: &mut Option<CaptureInstant>,
     input: &DictationAudio,
-    indicator: Option<&DictationIndicatorSender>,
+    indicator: &DictationSink<'_>,
     at: CaptureInstant,
     release_while_idle: bool,
 ) -> Result<()> {
@@ -87,9 +87,7 @@ pub(super) fn assistant_start(
     crate::voice_assistant::begin_turn();
     *started = Some(at);
     assistant_status(AssistantCaptureStatus::Recording);
-    if let Some(indicator) = indicator {
-        indicator.send(DictationIndicatorEvent::AssistantStarted);
-    }
+    indicator.send(DictationIndicatorEvent::AssistantStarted);
     Ok(())
 }
 
@@ -99,7 +97,7 @@ pub(super) fn assistant_cancel(
     started: &mut Option<CaptureInstant>,
     pending: &mut Option<u64>,
     input: &DictationAudio,
-    indicator: Option<&DictationIndicatorSender>,
+    indicator: &DictationSink<'_>,
 ) -> Result<()> {
     cancel_with(
         started,
@@ -107,9 +105,7 @@ pub(super) fn assistant_cancel(
         || input.cancel(),
         crate::voice_assistant::cancel,
         || {
-            if let Some(indicator) = indicator {
-                indicator.send(DictationIndicatorEvent::AssistantCancelled);
-            }
+            indicator.send(DictationIndicatorEvent::AssistantCancelled);
         },
     )?;
     assistant_status(AssistantCaptureStatus::Idle);
@@ -141,7 +137,7 @@ pub(super) fn assistant_end(
     started: &mut Option<CaptureInstant>,
     pending: &mut Option<u64>,
     input: &DictationAudio,
-    indicator: Option<&DictationIndicatorSender>,
+    indicator: &DictationSink<'_>,
     at: CaptureInstant,
 ) -> Result<()> {
     let Some(start) = started.take() else {
@@ -158,15 +154,11 @@ pub(super) fn assistant_end(
                     match crate::voice_assistant::submit(samples) {
                         Ok(receipt) => {
                             *pending = Some(receipt);
-                            if let Some(indicator) = indicator {
-                                indicator.send(DictationIndicatorEvent::AssistantWaiting);
-                            }
+                            indicator.send(DictationIndicatorEvent::AssistantWaiting);
                             assistant_status(AssistantCaptureStatus::Idle);
                         }
                         Err(_) => {
-                            if let Some(indicator) = indicator {
-                                indicator.send(DictationIndicatorEvent::AssistantFailed);
-                            }
+                            indicator.send(DictationIndicatorEvent::AssistantFailed);
                             assistant_status(AssistantCaptureStatus::Unavailable);
                         }
                     }
@@ -183,9 +175,7 @@ pub(super) fn assistant_end(
     }
     feedback::retract_start();
     assistant_status(AssistantCaptureStatus::Idle);
-    if let Some(indicator) = indicator {
-        indicator.send(DictationIndicatorEvent::AssistantCancelled);
-    }
+    indicator.send(DictationIndicatorEvent::AssistantCancelled);
     Ok(())
 }
 

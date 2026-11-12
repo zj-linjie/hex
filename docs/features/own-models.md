@@ -28,9 +28,10 @@ Picker header -> "Add model file…" -> native dialog (GGUF, All files)   // set
 │   copy; the same file again keeps the first import
 ├── ID custom-<first 16 hex of the SHA-256> (TranscriptionModelId::Custom)
 ├── Card -> name from general.name (Rename edits it), languages from the file,
-│   offline only (no streaming), Parakeet without language prompt or Auto,
-│   no benchmark; Use prepares it like a catalog model (verifies Hex's copy
-│   against its receipt instead of downloading). General's Language menu
+│   offline only (no streaming), no language prompt for a no-hint family,
+│   Auto when its header says it detects the language (as Parakeet v3-type
+│   files do), no benchmark; Use prepares it like a catalog model (verifies
+│   Hex's copy against its receipt instead of downloading). General's Language menu
 │   lists every language the file declares: Hex's usual list first, then the
 │   rest of Whisper's codes by English name (Norwegian `no`, Norwegian
 │   Nynorsk `nn`, …; #1148)
@@ -67,7 +68,11 @@ Picker header -> "Use model file where it is…" beside "Add model file…" -> t
 │   SHA-256, receipt and manifest (with the file's path, no Hugging Face origin)
 │   in models/custom/; nothing copied, nothing written near the file
 ├── The same file imported by copy before -> same ID, keeps its name; Hex's
-│   copy is removed
+│   copy is removed only when the OS shows the chosen file is a different
+│   file (links resolved, device and inode or volume and file index); when
+│   unsure, the copy stays
+├── Hex's own copy chosen (a linked folder, a hard link, another case) ->
+│   nothing changes; the import stays a copy
 ├── Card -> "Used where it is" · family · languages · the file's name; Use
 │   loads it from its path; later uses rehash only when size, mtime, or file ID
 │   change, and Check again accepts it when the contents still match
