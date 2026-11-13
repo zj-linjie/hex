@@ -17,4 +17,9 @@ pub(super) const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Could not delete the local transfer.", ["Could not delete the local transfer.", "无法删除本机转入。", "Could not delete the local transfer.", "Could not delete the local transfer.", "Could not delete the local transfer.", "Could not delete the local transfer."]),
     ("Could not copy the image.", ["Could not copy the image.", "无法复制图片。", "Could not copy the image.", "Could not copy the image.", "Could not copy the image.", "Could not copy the image."]),
     ("Could not reveal the attachment.", ["Could not reveal the attachment.", "无法在访达中显示附件。", "Could not reveal the attachment.", "Could not reveal the attachment.", "Could not reveal the attachment.", "Could not reveal the attachment."]),
+    ("Send to Grok Bot", ["Send to Grok Bot", "发送到 Grok Bot", "Send to Grok Bot", "Send to Grok Bot", "Send to Grok Bot", "Send to Grok Bot"]),
+    ("Sending to Grok Bot…", ["Sending to Grok Bot…", "正在发送到 Grok Bot…", "Sending to Grok Bot…", "Sending to Grok Bot…", "Sending to Grok Bot…", "Sending to Grok Bot…"]),
+    ("Sent to Grok Bot Anywhere.", ["Sent to Grok Bot Anywhere.", "已发送到 Grok Bot Anywhere。", "Sent to Grok Bot Anywhere.", "Sent to Grok Bot Anywhere.", "Sent to Grok Bot Anywhere.", "Sent to Grok Bot Anywhere."]),
+    ("Grok Bot Anywhere has no receiving bot turned on.", ["Grok Bot Anywhere has no receiving bot turned on.", "Grok Bot Anywhere 尚未开启任何接收机器人。", "Grok Bot Anywhere has no receiving bot turned on.", "Grok Bot Anywhere has no receiving bot turned on.", "Grok Bot Anywhere has no receiving bot turned on.", "Grok Bot Anywhere has no receiving bot turned on."]),
+    ("The Grok Bot Anywhere handoff failed.", ["The Grok Bot Anywhere handoff failed.", "移交到 Grok Bot Anywhere 失败。", "The Grok Bot Anywhere handoff failed.", "The Grok Bot Anywhere handoff failed.", "The Grok Bot Anywhere handoff failed.", "The Grok Bot Anywhere handoff failed."]),
 ];

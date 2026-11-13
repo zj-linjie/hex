@@ -192,3 +192,230 @@ fn reply_preserves_manifest_uuid_spelling_and_store_deduplicates_it() -> Result<
     assert_eq!(list_in(&f.store)?.len(), 1);
     Ok(())
 }
+
+fn grok_fixture(f: &Fixture) -> Result<(PathBuf, PathBuf, Vec<grok::Bot>)> {
+    // macOS's temp root may contain a system symlink (/var -> /private/var).
+    let base = fs::canonicalize(&f.base)?;
+    let inbox = base.join("ShareInbox");
+    private_dir(&inbox)?;
+    fs::write(
+        inbox.join("configuration.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1, "accountId": "fake-account",
+            "entries": [
+                {"accountId":"fake-account-a", "botId":"fake-bot-a", "botName":"Fixture Alpha", "sessionId":"fake-session-a", "mode":"compose", "prefix":"Alpha prefix"},
+                {"accountId":"fake-account-b", "botId":"fake-bot-b", "botName":"Fixture Beta", "sessionId":"fake-session-b", "mode":"direct", "prefix":"Beta prefix"}
+            ]
+        }))?,
+    )?;
+    let bots = grok::bots_in(&inbox).map_err(|error| eyre!(error.message()))?;
+    Ok((base.join("custom-source"), inbox, bots))
+}
+
+#[test]
+fn grok_chosen_bot_copies_files_preserves_source_and_uses_fresh_ids() -> Result<()> {
+    let f = Fixture::new(Status::Queued)?;
+    f.change(|manifest| {
+        manifest["attachments"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name":"sample.zip", "uti":"public.zip-archive", "bytes":4, "kind":"file"
+            }));
+    })?;
+    fs::write(f.source.join("sample.zip"), b"data")?;
+    let (source, inbox, bots) = grok_fixture(&f)?;
+    assert_eq!(bots.len(), 2);
+    for bot_index in [1, 0] {
+        let batch = grok::send_in(&source, &inbox, &bots[bot_index])
+            .map_err(|error| eyre!(error.message()))?;
+        let payload: serde_json::Value =
+            serde_json::from_slice(&fs::read(batch.join("manifest.json"))?)?;
+        let suffix = if bot_index == 1 { "b" } else { "a" };
+        assert_eq!(payload["version"], 1);
+        assert_eq!(payload["source"], "wechat");
+        assert_eq!(payload["accountId"], format!("fake-account-{suffix}"));
+        assert_eq!(payload["botId"], format!("fake-bot-{suffix}"));
+        assert_eq!(payload["sessionId"], format!("fake-session-{suffix}"));
+        assert_eq!(
+            payload["mode"],
+            if bot_index == 1 { "direct" } else { "compose" }
+        );
+        assert_eq!(
+            payload["prefix"],
+            if bot_index == 1 {
+                "Beta prefix"
+            } else {
+                "Alpha prefix"
+            }
+        );
+        assert_eq!(payload["title"], "A transfer");
+        assert_eq!(
+            payload["id"].as_str(),
+            batch.file_name().and_then(|name| name.to_str())
+        );
+        let id = payload["id"].as_str().unwrap();
+        assert!(
+            id.len() <= 100
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        );
+        assert!(payload["createdAt"].is_u64());
+        assert_eq!(
+            payload["files"],
+            serde_json::json!([{"relativePath":"sample.zip","name":"sample.zip"}])
+        );
+        assert_eq!(fs::read(batch.join("sample.zip"))?, b"data");
+        assert_eq!(fs::read(source.join("sample.zip"))?, b"data");
+        assert!(!payload.as_object().unwrap().contains_key("avatarKey"));
+        assert!(!payload.as_object().unwrap().contains_key("botName"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&batch)?.permissions().mode() & 0o777, 0o700);
+            assert_eq!(
+                fs::metadata(batch.join("sample.zip"))?.permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(batch.join("manifest.json"))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+    // A second send to the same bot must be a fresh handoff too.
+    grok::send_in(&source, &inbox, &bots[1]).map_err(|error| eyre!(error.message()))?;
+    assert_eq!(fs::read_dir(inbox.join("Ready"))?.count(), 3);
+    assert_eq!(fs::read(source.join("body.txt"))?, b"hello");
+    assert!(source.join("manifest.json").exists());
+    assert_eq!(fs::read_dir(&inbox)?.count(), 2); // config and Ready, no staging
+    Ok(())
+}
+
+#[test]
+fn grok_missing_or_invalid_configuration_writes_nothing() -> Result<()> {
+    let f = Fixture::new(Status::Queued)?;
+    let (source, inbox, bots) = grok_fixture(&f)?;
+    for configuration in [
+        None,
+        Some("unreadable JSON"),
+        Some(r#"{"version":2,"entries":[]}"#),
+        Some(r#"{"version":1,"entries":[]}"#),
+    ] {
+        let path = inbox.join("configuration.json");
+        match configuration {
+            None => fs::remove_file(&path)?,
+            Some(contents) => fs::write(&path, contents)?,
+        }
+        assert!(matches!(
+            grok::send_in(&source, &inbox, &bots[0]),
+            Err(grok::Error::NotConfigured)
+        ));
+        assert!(!inbox.join("Ready").exists());
+        assert!(!fs::read_dir(&inbox)?.any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".hex-")
+        }));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn grok_symlink_attachment_is_refused_without_publishing() -> Result<()> {
+    let f = Fixture::new(Status::Queued)?;
+    f.change(|manifest| {
+        manifest["attachments"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "name":"linked.zip", "uti":"public.zip-archive", "bytes":5, "kind":"file"
+            }));
+    })?;
+    let (source, inbox, bots) = grok_fixture(&f)?;
+    std::os::unix::fs::symlink("body.txt", source.join("linked.zip"))?;
+    assert!(matches!(
+        grok::send_in(&source, &inbox, &bots[0]),
+        Err(grok::Error::HandoffFailed)
+    ));
+    assert!(!inbox.join("Ready").exists());
+    assert_eq!(fs::read_dir(&inbox)?.count(), 1);
+    Ok(())
+}
+
+#[test]
+fn grok_body_becomes_text_without_a_duplicate_attachment() -> Result<()> {
+    let f = Fixture::new(Status::Queued)?;
+    let (source, inbox, bots) = grok_fixture(&f)?;
+    let batch = grok::send_in(&source, &inbox, &bots[0]).map_err(|error| eyre!(error.message()))?;
+    let payload: serde_json::Value =
+        serde_json::from_slice(&fs::read(batch.join("manifest.json"))?)?;
+    assert_eq!(payload["text"], "A note\n\nhello");
+    assert_eq!(payload["files"], serde_json::json!([]));
+    assert!(!batch.join("body.txt").exists());
+    assert_eq!(fs::read_dir(batch)?.count(), 1);
+    Ok(())
+}
+
+#[test]
+fn grok_empty_text_falls_back_to_title_and_utf16_limits_are_respected() -> Result<()> {
+    let f = Fixture::new(Status::Queued)?;
+    f.change(|manifest| {
+        manifest["note"] = "".into();
+        manifest["attachments"][0]["bytes"] = 0.into();
+    })?;
+    fs::write(f.source.join("body.txt"), b"")?;
+    let (source, inbox, bots) = grok_fixture(&f)?;
+    let batch = grok::send_in(&source, &inbox, &bots[0]).map_err(|error| eyre!(error.message()))?;
+    let payload: serde_json::Value =
+        serde_json::from_slice(&fs::read(batch.join("manifest.json"))?)?;
+    assert_eq!(payload["text"], "A transfer");
+    let body = "🎉".repeat(1_000_001);
+    f.change(|manifest| {
+        manifest["title"] = "🎉".repeat(1000).into();
+        manifest["attachments"][0]["bytes"] = (body.len() as u64).into();
+    })?;
+    fs::write(source.join("body.txt"), &body)?;
+    let batch = grok::send_in(&source, &inbox, &bots[0]).map_err(|error| eyre!(error.message()))?;
+    let payload: serde_json::Value =
+        serde_json::from_slice(&fs::read(batch.join("manifest.json"))?)?;
+    assert_eq!(
+        payload["text"].as_str().unwrap().encode_utf16().count(),
+        2_000_000
+    );
+    assert_eq!(
+        payload["title"].as_str().unwrap().encode_utf16().count(),
+        1000
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn grok_refuses_symlink_ready_and_removes_private_staging() -> Result<()> {
+    let f = Fixture::new(Status::Queued)?;
+    let (source, inbox, bots) = grok_fixture(&f)?;
+    let elsewhere = inbox.join("elsewhere");
+    fs::create_dir(&elsewhere)?;
+    std::os::unix::fs::symlink(&elsewhere, inbox.join("Ready"))?;
+    assert!(matches!(
+        grok::send_in(&source, &inbox, &bots[0]),
+        Err(grok::Error::HandoffFailed)
+    ));
+    assert_eq!(fs::read_dir(elsewhere)?.count(), 0);
+    assert_eq!(fs::read_dir(&inbox)?.count(), 3); // config, symlink, elsewhere
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn grok_other_platforms_report_not_configured() {
+    assert!(matches!(grok::bots(), Err(grok::Error::NotConfigured)));
+}

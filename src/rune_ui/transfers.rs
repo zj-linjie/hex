@@ -23,14 +23,27 @@ pub(super) struct TransfersPane {
     delete_armed: bool,
     pub(super) cache: Option<rune::ImageCache>,
     images: RefCell<HashMap<PathBuf, rune::Image>>,
+    #[cfg(target_os = "macos")]
+    grok_bots: Vec<transfers::grok::Bot>,
+    #[cfg(target_os = "macos")]
+    grok_worker: Option<(String, std::sync::mpsc::Receiver<GrokReply>)>,
+    #[cfg(target_os = "macos")]
+    grok_notice: Option<&'static str>,
 }
 
+#[cfg(target_os = "macos")]
+type GrokReply = Result<Vec<transfers::grok::Bot>, transfers::grok::Error>;
+
 pub(super) fn poll(ui: &mut Ui) -> bool {
+    #[cfg(target_os = "macos")]
+    let changed = poll_grok(ui);
+    #[cfg(not(target_os = "macos"))]
+    let changed = false;
     if !ui.live() || ui.pane != Pane::Transfers || ui.labs_open {
-        return false;
+        return changed;
     }
     if ui.transfers.revision == transfers::revision() {
-        return false;
+        return changed;
     }
     match transfers::list() {
         Ok(entries) => {
@@ -68,6 +81,11 @@ fn select(ui: &mut Ui, id: Option<String>) {
     ui.transfers.selected = id;
     ui.transfers.delete_armed = false;
     ui.transfers.body = None;
+    #[cfg(target_os = "macos")]
+    {
+        ui.transfers.grok_bots.clear();
+        ui.transfers.grok_notice = None;
+    }
     if let Some(entry) = ui
         .transfers
         .entries
@@ -197,6 +215,50 @@ fn detail(ui: &Ui, p: Paint) -> El {
         |ui: &mut Ui, _| ui.transfers.delete_armed = true,
     )];
     let mut body = col().key("transfer-content").gap(16.0);
+    #[cfg(target_os = "macos")]
+    {
+        let mut send = col().key("transfer-grok").gap(8.0);
+        if pane.grok_worker.is_some() {
+            send = send.child(controls::note(
+                "grok-busy",
+                tr("Sending to Grok Bot…"),
+                p.muted(),
+            ));
+        } else if pane.grok_bots.len() > 1 {
+            for (index, bot) in pane.grok_bots.iter().enumerate() {
+                let bot = bot.clone();
+                let label = bot.bot_name.clone();
+                send = send.child(controls::button(
+                    p,
+                    &format!("transfer-grok-{index}"),
+                    &label,
+                    ButtonKind::Secondary,
+                    move |ui: &mut Ui, _| send_grok(ui, Some(bot.clone())),
+                ));
+            }
+        } else {
+            send = send.child(controls::button(
+                p,
+                "transfer-send-grok",
+                tr("Send to Grok Bot"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| send_grok(ui, None),
+            ));
+            if let Some(bot) = pane.grok_bots.first() {
+                send = send.child(
+                    text(&bot.bot_name)
+                        .key("grok-bot-name")
+                        .font(p.k.ty.body)
+                        .color(p.muted())
+                        .wrap(),
+                );
+            }
+        }
+        if let Some(notice) = pane.grok_notice {
+            send = send.child(controls::note("grok-notice", tr(notice), p.muted()));
+        }
+        body = body.child(send);
+    }
     if !entry.note.is_empty() {
         body = body.child(
             text(&entry.note)
@@ -329,6 +391,79 @@ fn detail(ui: &Ui, p: Paint) -> El {
             actions,
         ))
         .child(ld::card_scroll(p, "transfer-detail-scroll", body))
+}
+
+#[cfg(target_os = "macos")]
+fn send_grok(ui: &mut Ui, selected: Option<transfers::grok::Bot>) {
+    if !ui.live() || ui.transfers.grok_worker.is_some() {
+        return;
+    }
+    let Some(id) = ui.transfers.selected.clone() else {
+        return;
+    };
+    ui.transfers.error = None;
+    ui.transfers.grok_notice = None;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker_id = id.clone();
+    let wake = ui.modes.waker.clone();
+    let started = std::thread::Builder::new()
+        .name("hex-transfer-grok".into())
+        .spawn(move || {
+            let reply = (|| {
+                if let Some(bot) = selected {
+                    transfers::grok::send(&worker_id, &bot)?;
+                    Ok(Vec::new())
+                } else {
+                    let bots = transfers::grok::bots()?;
+                    if let [bot] = bots.as_slice() {
+                        transfers::grok::send(&worker_id, bot)?;
+                        // Keep the one recipient's name beside the one send button.
+                        Ok(bots)
+                    } else {
+                        Ok(bots)
+                    }
+                }
+            })();
+            let _ = sender.send(reply);
+            if let Some(wake) = wake {
+                wake();
+            }
+        });
+    if started.is_ok() {
+        ui.transfers.grok_worker = Some((id, receiver));
+    } else {
+        ui.transfers.error = Some(transfers::grok::HANDOFF_FAILED);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn poll_grok(ui: &mut Ui) -> bool {
+    use std::sync::mpsc::TryRecvError;
+    let reply = match ui
+        .transfers
+        .grok_worker
+        .as_ref()
+        .map(|(_, rx)| rx.try_recv())
+    {
+        Some(Ok(reply)) => reply,
+        Some(Err(TryRecvError::Disconnected)) => Err(transfers::grok::Error::HandoffFailed),
+        _ => return false,
+    };
+    let (id, _) = ui.transfers.grok_worker.take().unwrap();
+    if ui.transfers.selected.as_ref() == Some(&id) {
+        match reply {
+            Ok(bots) => {
+                if bots.len() <= 1 {
+                    ui.transfers.grok_notice = Some("Sent to Grok Bot Anywhere.");
+                }
+                if !bots.is_empty() {
+                    ui.transfers.grok_bots = bots;
+                }
+            }
+            Err(error) => ui.transfers.error = Some(error.message()),
+        }
+    }
+    true
 }
 
 fn copy_image(ui: &mut Ui, path: &std::path::Path) {

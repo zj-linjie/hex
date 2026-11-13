@@ -1,5 +1,6 @@
 //! The Mac's retained copies of explicitly queued Mobile transfers.
 
+pub(crate) mod grok;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
 #[cfg(test)]
