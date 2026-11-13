@@ -9,6 +9,7 @@
 use std::io::Write;
 mod human;
 mod transcribe;
+mod transfers;
 
 use clap::{Args, Subcommand};
 
@@ -31,6 +32,11 @@ pub struct Output {
 /// The control commands at the top of `hex`.
 #[derive(Subcommand, Debug)]
 pub enum ControlCli {
+    /// Import a queued Mobile transfer into the running Hex (macOS).
+    Transfers {
+        #[command(subcommand)]
+        command: transfers::TransfersCommand,
+    },
     /// Show what the running Hex is doing.
     ///
     /// Recording, meeting, model, features, permissions, window, version,
@@ -567,6 +573,7 @@ pub fn run(command: ControlCli) -> u8 {
                 send(ControlCommand::VocabularyRemove { term }, output)
             }
         },
+        ControlCli::Transfers { command } => transfers::run(command),
         ControlCli::Logs {
             process,
             lines,

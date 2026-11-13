@@ -60,6 +60,7 @@ impl AppearanceTheme {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct LabsSettings {
+    pub transfers: bool,
     /// The voice assistant's opt-in switch (`Feature::VoiceAssistant`).
     pub voice_assistant: bool,
     pub compatible_rewrite: bool,
@@ -308,6 +309,7 @@ where
 impl Default for LabsSettings {
     fn default() -> Self {
         Self {
+            transfers: false,
             voice_assistant: false,
             compatible_rewrite: false,
             skip_short_deepseek: false,

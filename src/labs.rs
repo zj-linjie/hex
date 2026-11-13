@@ -174,6 +174,7 @@ impl Feature {
             | Self::VoiceAssistant
             | Self::CompatibleRewrite
             | Self::SkipShortDeepseek
+            | Self::Transfers
             | Self::Translation => Audience::Everyone,
         }
     }
@@ -260,6 +261,7 @@ impl Feature {
             | Self::HistoryMultiSelect => 20261110,
             Self::KeepMicrophoneOpen | Self::PrintStart => 20261111,
             Self::ScreenVocabulary | Self::VoicePrompt => 20261112,
+            Self::Transfers => 20261113,
         }
     }
 
@@ -340,6 +342,7 @@ impl Feature {
             | Self::VoiceAssistant
             | Self::CompatibleRewrite
             | Self::SkipShortDeepseek
+            | Self::Transfers
             | Self::Translation => cfg!(target_os = "macos"),
             Self::CopyOnly => cfg!(any(target_os = "macos", target_os = "windows")),
             Self::ReturnToApp => cfg!(target_os = "macos"),
@@ -480,6 +483,7 @@ impl Feature {
             Self::VoicePrompt => "voice-prompt",
             Self::MoreDictationShortcuts => "more-dictation-shortcuts",
             Self::Translation => "translation",
+            Self::Transfers => "transfers",
         }
     }
 
@@ -567,6 +571,7 @@ impl Feature {
             Self::VoicePrompt => "labs.voice_prompt",
             Self::MoreDictationShortcuts => "labs.more_dictation_shortcuts",
             Self::Translation => "labs.translation",
+            Self::Transfers => "labs.transfers",
         }
     }
 
@@ -658,6 +663,7 @@ impl Feature {
             Self::VoicePrompt => settings.labs.voice_prompt,
             Self::MoreDictationShortcuts => settings.labs.more_dictation_shortcuts,
             Self::Translation => settings.labs.translation,
+            Self::Transfers => settings.labs.transfers,
         }
     }
 
@@ -747,6 +753,7 @@ impl Feature {
             &mut labs.voice_prompt,
             &mut labs.more_dictation_shortcuts,
             &mut labs.translation,
+            &mut labs.transfers,
         ]
     }
 
@@ -846,6 +853,7 @@ impl Feature {
             Self::VoicePrompt => settings.labs.voice_prompt = on,
             Self::MoreDictationShortcuts => settings.labs.more_dictation_shortcuts = on,
             Self::Translation => settings.labs.translation = on,
+            Self::Transfers => settings.labs.transfers = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;

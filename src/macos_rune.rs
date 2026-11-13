@@ -293,6 +293,9 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig, hidden: bool
     // and the window says why (#744).
     let launch = AppSettings::load_for_launch();
     let mut settings = launch.settings;
+    let _ = std::thread::Builder::new()
+        .name("hex-transfers-scan".into())
+        .spawn(crate::transfers::scan_default);
     let settings_error = launch
         .note
         .map(crate::app_settings::LaunchNote::into_message);

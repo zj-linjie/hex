@@ -25,6 +25,40 @@ code, and can be captured like any other (`docs/windows.md`).
 The read-only `hex history` and `hex meetings list|show|chapters|search` commands, and
 `hex mcp`, read files rather than the running Hex; see `docs/transcript-cli.md`.
 
+## Mobile transfers (macOS, Labs)
+
+Enable `labs.transfers` in Labs (off by default), then run:
+
+```sh
+hex transfers import --dir "/absolute/path/to/transfer" --json
+```
+
+The running app imports the complete `manifest.json` schema 1 item and its
+attachments into its owner-only Application Support `transfers/<id>/` folder.
+The manifest id is authoritative even in a custom source directory. Held
+items are left in the source. Queued items require every attachment to exist
+and match its declared byte count before any local copy is published. Unknown
+manifest fields are ignored. Missing schema versions, versions other than 1,
+invalid names, symlinks, incomplete iCloud files, missing files and size
+mismatches refuse the import (exit 1). There is no clipboard or History write.
+
+Successful machine output is exactly the transfer result, without the usual
+control envelope:
+
+```json
+{"schema_version":1,"id":"<uuid>","imported":true}
+{"schema_version":1,"id":"<uuid>","imported":false,"reason":"held"}
+{"schema_version":1,"id":"<uuid>","imported":false,"reason":"already"}
+```
+
+All three exit 0. With Hex stopped, exit 3 and import nothing. Without `--json`,
+print one human line. Errors use the regular control error response. This
+command never launches Hex or writes `receipt.json`; the sync script owns
+receipts after an imported or already result. macOS app launch also scans
+`~/Library/Mobile Documents/com~apple~CloudDocs/Hex Mobile/transfers` for queued
+items without receipts while the Lab is on. A missing folder is empty; held,
+partial and dataless files are skipped. Custom sync directories require the CLI.
+
 ## Commands
 
 ```ts

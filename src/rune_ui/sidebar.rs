@@ -65,6 +65,7 @@ pub(super) enum Pane {
     /// Recorded calls and their settings, or the opt-in (macOS beta).
     Meetings,
     History,
+    Transfers,
     /// The shots and recordings Labs › Screenshots saved (macOS, while
     /// it's on).
     #[cfg(hex_capture)]
@@ -94,6 +95,7 @@ impl Pane {
         Pane::Modes,
         Pane::Meetings,
         Pane::History,
+        Pane::Transfers,
         #[cfg(hex_capture)]
         Pane::Captures,
         #[cfg(hex_capture)]
@@ -113,6 +115,7 @@ impl Pane {
             // On from Labs (dev builds), or while its driver is installed.
             Pane::VoiceFilter => caps.fun && fun::running(ui),
             Pane::VoiceAssistant => caps.voice_assistant && ui.settings.labs.voice_assistant,
+            Pane::Transfers => caps.transfers && crate::transfers::enabled(&ui.settings),
             Pane::Translation => {
                 caps.os == super::platform::Os::Macos && ui.settings.labs.translation
             }
@@ -131,6 +134,7 @@ impl Pane {
             Pane::Output => tr("Output"),
             Pane::Modes => tr("Modes"),
             Pane::History => tr("History"),
+            Pane::Transfers => tr("Transfers"),
             #[cfg(hex_capture)]
             Pane::Captures => tr("Captures"),
             Pane::Meetings => tr("Meetings"),
@@ -150,6 +154,7 @@ impl Pane {
             Pane::Output => "nav-output",
             Pane::Modes => "nav-modes",
             Pane::History => "nav-history",
+            Pane::Transfers => "nav-transfers",
             #[cfg(hex_capture)]
             Pane::Captures => "nav-captures",
             Pane::Meetings => "nav-meetings",
@@ -169,6 +174,7 @@ impl Pane {
             Pane::Output => &OUTPUT_ICON,
             Pane::Modes => &MODES_ICON,
             Pane::History => &HISTORY_ICON,
+            Pane::Transfers => &HISTORY_ICON,
             #[cfg(hex_capture)]
             Pane::Captures => &captures::CAPTURES_ICON,
             Pane::Meetings => &MEETINGS_ICON,

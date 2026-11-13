@@ -36,6 +36,9 @@ pub(super) static LABS_ICON: Icon = Icon {
 /// builds).
 pub(super) fn main_panes(ui: &Ui) -> Vec<Pane> {
     let mut panes = vec![Pane::General, Pane::Output, Pane::History];
+    if Pane::Transfers.shown(ui) {
+        panes.push(Pane::Transfers);
+    }
     #[cfg(hex_capture)]
     let optional = [
         Pane::Captures,
@@ -373,6 +376,14 @@ fn rows(ui: &Ui) -> Vec<Row> {
         None => row(feature, icon, title, about),
     };
     let mut rows = Vec::new();
+    if caps.transfers {
+        rows.push(row(
+            Feature::Transfers,
+            Some(Pane::Transfers.icon()),
+            tr("Transfers"),
+            tr("Receive queued text, images, and files from Hex Mobile on this Mac"),
+        ));
+    }
     if caps.meetings {
         rows.push(row(
             Feature::Meetings,
@@ -1079,6 +1090,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::PrintStart => "lab-print-start",
         Feature::VoicePrompt => "lab-voice-prompt",
         Feature::Translation => "lab-translation",
+        Feature::Transfers => "lab-transfers",
     }
 }
 

@@ -36,6 +36,7 @@ pub(super) struct Capabilities {
     /// settings (beta, in Labs).
     pub(super) meetings: bool,
     pub(super) voice_assistant: bool,
+    pub(super) transfers: bool,
     /// Calendar meeting reminders: the Calendar card under Meetings
     /// (macOS, EventKit).
     pub(super) calendar: bool,
@@ -77,6 +78,7 @@ impl Capabilities {
     pub(super) const LINUX: Self = Self {
         os: Os::Linux,
         voice_assistant: false,
+        transfers: false,
         meetings: true,
         calendar: false,
         permissions: false,
@@ -97,6 +99,7 @@ impl Capabilities {
     pub(super) const MACOS: Self = Self {
         os: Os::Macos,
         voice_assistant: true,
+        transfers: true,
         meetings: true,
         calendar: true,
         permissions: true,
@@ -117,6 +120,7 @@ impl Capabilities {
     pub(super) const WINDOWS: Self = Self {
         os: Os::Windows,
         voice_assistant: false,
+        transfers: false,
         meetings: true,
         calendar: false,
         permissions: false,
@@ -859,6 +863,10 @@ impl Difference {
 #[cfg(test)]
 const DIFFERENCES: &[(&str, Difference)] = &[
     (
+        "transfers",
+        Difference::OsPattern("Hex Mobile uses the paired Mac iCloud Drive folder"),
+    ),
+    (
         "voice_assistant",
         Difference::Pending("Xiaozhi assistant input and playback are implemented on macOS"),
     ),
@@ -919,11 +927,12 @@ const DIFFERENCES: &[(&str, Difference)] = &[
 impl Capabilities {
     /// Every capability by name. Destructuring makes a new capability a
     /// compile error here until it is named.
-    pub(super) fn fields(self) -> [(&'static str, bool); 16] {
+    pub(super) fn fields(self) -> [(&'static str, bool); 17] {
         let Self {
             os: _,
             meetings,
             voice_assistant,
+            transfers,
             calendar,
             permissions,
             launch_at_login,
@@ -942,6 +951,7 @@ impl Capabilities {
         [
             ("meetings", meetings),
             ("voice_assistant", voice_assistant),
+            ("transfers", transfers),
             ("calendar", calendar),
             ("permissions", permissions),
             ("launch_at_login", launch_at_login),

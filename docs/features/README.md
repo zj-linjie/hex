@@ -37,6 +37,8 @@ dictation stays on its own shortcut.
 (Output, off by default): English → Simplified Chinese lookup with dictionary
 phonetics, local speech, a pane, and Control-Option-T for an independent
 window; merged into the personal fork's `dev`, with verification limits in its map.
+[Transfers](transfers.md) is the macOS Labs inbox for queued text, images,
+and files from Hex Mobile, off by default and kept until deleted locally.
 [Labs](labs.md) gives every unfinished feature its own switch, off by
 default, listed under collapsible groups (Dictation, Output, History,
 Meetings, Annotate, Shortcuts, Models) with only this OS's labs.

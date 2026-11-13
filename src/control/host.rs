@@ -245,6 +245,9 @@ fn command(host: &dyn Host, command: ControlCommand) -> ControlReply {
             }
         })),
         ControlCommand::LaunchAtLogin { enabled } => launch_at_login(host, enabled),
+        ControlCommand::TransfersImport { .. } => {
+            ControlReply::error("unsupported", "Transfers is available on macOS")
+        }
         ControlCommand::VocabularyList => reply(load().map(|settings| ControlReply::Vocabulary {
             entries: settings.vocabulary,
         })),

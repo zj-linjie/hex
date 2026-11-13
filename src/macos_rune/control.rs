@@ -337,6 +337,25 @@ impl Pump {
                     Err(error) => ControlReply::error("unavailable", format!("{error:#}")),
                 },
             }),
+            ControlCommand::TransfersImport { dir } => {
+                background(reply, move || {
+                    let settings = load()?;
+                    if !crate::transfers::enabled(&settings) {
+                        return Err(ControlError::new(
+                            "feature-off",
+                            "Turn on Transfers in Labs first",
+                        ));
+                    }
+                    let result = crate::transfers::import(&dir).map_err(|_| {
+                        ControlError::new("invalid", "Transfer is unavailable or invalid")
+                    })?;
+                    if result.imported {
+                        crate::transfers::macos::notify_if_hidden();
+                    }
+                    Ok(ControlReply::TransferImport { result })
+                });
+                None
+            }
             ControlCommand::VocabularyList => Some(reply_with(load().map(|settings| {
                 ControlReply::Vocabulary {
                     entries: settings.vocabulary,

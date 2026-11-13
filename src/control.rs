@@ -195,6 +195,10 @@ pub enum ControlCommand {
         #[serde(default)]
         enabled: Option<bool>,
     },
+    /// Import a queued Mobile item through the Mac app.
+    TransfersImport {
+        dir: std::path::PathBuf,
+    },
     /// The shared vocabulary.
     VocabularyList,
     VocabularyAdd {
@@ -270,6 +274,9 @@ pub enum ControlReply {
     },
     Models {
         models: Vec<ModelInfo>,
+    },
+    TransferImport {
+        result: crate::transfers::ImportReply,
     },
     Vocabulary {
         entries: Vec<VocabularyEntry>,
@@ -451,6 +458,7 @@ impl ControlCommand {
                 ..
             } => PRINT_START_WAIT + Duration::from_secs(5),
             Self::Dictation { print: true, .. } => PRINT_WAIT + Duration::from_secs(5),
+            Self::TransfersImport { .. } => Duration::from_secs(120),
             _ => CONTROL_DEADLINE,
         }
     }

@@ -21,6 +21,9 @@ mod found_choice;
 mod fun;
 mod general;
 mod history;
+mod transfers;
+#[cfg(target_os = "macos")]
+pub(crate) use transfers::imported as transfer_imported;
 #[cfg_attr(target_os = "linux", path = "rune_ui/linux_host.rs")]
 #[cfg_attr(target_os = "windows", path = "rune_ui/windows_host.rs")]
 #[cfg_attr(target_os = "macos", path = "rune_ui/macos_host.rs")]
@@ -146,6 +149,8 @@ pub(crate) fn run_app(
     }
     let quit = app.handle();
     let window = app.handle();
+    #[cfg(target_os = "macos")]
+    crate::transfers::macos::install(window.clone());
     std::thread::Builder::new()
         .name("hex-window-requests".into())
         .spawn(move || {
@@ -346,6 +351,8 @@ fn build(init: impl FnOnce() -> Ui + 'static, playground: PlaygroundMode) -> run
         PlaygroundMode::Gated => playground::attach_gated(app),
     };
     let window = app.handle();
+    #[cfg(target_os = "macos")]
+    crate::transfers::macos::install(window.clone());
     // Nothing shown reads the handle, so this asks for no frame. The first
     // frame's poll ran without it, so the window's tick starts from here.
     window.update_if({
@@ -677,6 +684,7 @@ pub(crate) struct Ui {
     duck_volume_drag: Option<f32>,
     models: models::Models,
     history: history::HistoryPane,
+    transfers: transfers::TransfersPane,
     #[cfg(hex_capture)]
     captures: captures::CapturesPane,
     modes: modes::ModesPane,
@@ -798,6 +806,7 @@ impl Ui {
             duck_volume_drag: None,
             models: models::Models::default(),
             history: history::HistoryPane::default(),
+            transfers: transfers::TransfersPane::default(),
             #[cfg(hex_capture)]
             captures: captures::CapturesPane::default(),
             modes,
@@ -1254,6 +1263,7 @@ fn local_meetings(ui: &mut Ui) -> bool {
 
 fn setup(ui: &mut Ui, waker: Waker) {
     ui.modes.waker = Some(waker.clone());
+    ui.transfers.cache = Some(rune::ImageCache::new(waker.clone()));
     ui.modes.icon_cache = Some(rune::ImageCache::new(waker.clone()));
     #[cfg(hex_capture)]
     ui.captures.set_cache(rune::ImageCache::new(waker.clone()));
@@ -1318,6 +1328,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     changed |= modes::poll_chooser(ui);
     changed |= voice_assistant::poll(ui);
     changed |= translation::poll(ui, tx);
+    changed |= transfers::poll(ui);
     changed |= model_import::poll(ui);
     changed |= meetings::poll_import(ui);
     changed |= found::poll(ui);
@@ -1424,6 +1435,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         Pane::Output => (Vec::new(), output::pane(ui, p, cx.is_reduced_motion())),
         Pane::Modes => modes::pane(ui, p, &mut layer),
         Pane::History => history::pane(ui, p, &mut layer),
+        Pane::Transfers => (Vec::new(), transfers::pane(ui, p)),
         #[cfg(hex_capture)]
         Pane::Captures => (Vec::new(), captures::pane(ui, p)),
         Pane::Meetings => meetings::pane(ui, p, &mut layer),

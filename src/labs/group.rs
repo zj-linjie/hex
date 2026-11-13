@@ -88,7 +88,8 @@ impl Feature {
             | Self::CompatibleRewrite
             | Self::SkipShortDeepseek
             | Self::Translation => Group::Output,
-            Self::KeepRecordings
+            Self::Transfers
+            | Self::KeepRecordings
             | Self::HistoryStats
             | Self::HistoryMultiSelect
             | Self::RecentDictations => Group::History,

@@ -19,6 +19,7 @@ mod portuguese;
 mod russian;
 mod text_language;
 mod traditional_chinese;
+mod transfers;
 
 /// A persisted interface-language code (`None` follows the system) and its
 /// native name.
@@ -348,6 +349,7 @@ pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str,
     TRANSLATIONS
         .iter()
         .chain(extras::TRANSLATIONS)
+        .chain(transfers::TRANSLATIONS)
         .chain(meetings::TRANSLATIONS)
         .chain(labs::TRANSLATIONS)
         .chain(failures::TRANSLATIONS)
@@ -1717,6 +1719,9 @@ mod tests {
         include_str!("../rune_ui/speech_model.rs"),
         include_str!("../rune_ui/vocabulary.rs"),
         include_str!("../rune_ui/translation.rs"),
+        include_str!("../rune_ui/transfers.rs"),
+        #[cfg(target_os = "macos")]
+        include_str!("../transfers/macos.rs"),
         include_str!("../rune_ui/translation/content.rs"),
         include_str!("../rune_ui/translation/speech.rs"),
         include_str!("../rune_ui/translation/popup.rs"),

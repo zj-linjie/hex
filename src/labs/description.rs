@@ -217,6 +217,7 @@ impl Feature {
             Self::VoiceAssistant => "Talk to your Xiaozhi assistant (macOS)",
             Self::CompatibleRewrite => "Rewrite dictation through a compatible text model (macOS)",
             Self::SkipShortDeepseek => "Skip DeepSeek rewriting for short dictations (macOS)",
+            Self::Transfers => "Receive queued text, images, and files from Hex Mobile on this Mac",
             Self::Translation => {
                 "Look up English words and phrases in Simplified Chinese, with phonetics and speech (its own pane and window, macOS)"
             }

@@ -85,11 +85,12 @@ pub enum Feature {
     PauseMenu,
     PrintStart,
     Translation,
+    Transfers,
     VoicePrompt,
 }
 
 impl Feature {
-    pub const ALL: [Self; 81] = [
+    pub const ALL: [Self; 82] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::VoiceAssistant,
@@ -171,5 +172,6 @@ impl Feature {
         Self::PrintStart,
         Self::VoicePrompt,
         Self::Translation,
+        Self::Transfers,
     ];
 }

@@ -70,6 +70,7 @@ mod shortcut_pause;
 #[cfg(target_os = "macos")]
 mod suppression;
 mod transcription;
+mod transfers;
 mod translation;
 mod updater;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

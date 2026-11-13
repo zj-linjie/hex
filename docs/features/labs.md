@@ -23,6 +23,7 @@ feedback and Run setup again.
 
 ```ts
 Feature             Pane  Toggle (settings.json, hex settings)   On: what it does
+├── Transfers       yes labs.transfers                 (macOS)   queued Hex Mobile text, images and files; local inbox immediately after History; see transfers.md
 ├── Voice Assistant yes labs.voice_assistant          (macOS)   Xiaozhi official voice/reply audio and the existing MCP bridge; see voice-assistant.md
 ├── Translation     yes labs.translation              (macOS)   English→简体中文 lookup, phonetics, speech; pane + Control-Option-T window; see translation.md
 ├── Meetings (beta) yes   meetings.enabled             (macOS)   Meetings joins the sidebar: call detection, recording, transcripts

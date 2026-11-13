@@ -693,6 +693,11 @@ pub(super) const KEYS: &[Key] = &[
         "Play the assistant reply audio",
     ),
     key(
+        "labs.transfers",
+        Kind::Bool,
+        "Labs: receive queued transfers from Hex Mobile (macOS)",
+    ),
+    key(
         "labs.voice_prompt",
         Kind::Bool,
         "Labs: a spoken phrase inside a dictation hands the mode's OpenCode model a one-off \
@@ -927,6 +932,7 @@ pub(super) const RETIRED: &[(&str, &str)] = &[
 pub(super) const NEEDS: &[(&str, &str)] = &[
     ("voice_assistant.", "voice_assistant"),
     ("labs.voice_assistant", "voice_assistant"),
+    ("labs.transfers", "transfers"),
     ("meetings.calendar.", "calendar"),
     ("meetings.", "meetings"),
     ("labs.live_chapters", "meetings"),

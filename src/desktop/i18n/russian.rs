@@ -15,6 +15,21 @@ pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {
 
 #[rustfmt::skip]
 const TRANSLATIONS: &[(&str, &str)] = &[
+    ("Transfers", "Transfers"),
+    ("Receive queued text, images, and files from Hex Mobile on this Mac", "Receive queued text, images, and files from Hex Mobile on this Mac"),
+    ("A transfer arrived from Hex Mobile.", "A transfer arrived from Hex Mobile."),
+    ("No transfers yet.", "No transfers yet."),
+    ("Search transfers", "Search transfers"),
+    ("{} attachments", "{} attachments"),
+    ("Image", "Image"),
+    ("File", "File"),
+    ("Copy image", "Copy image"),
+    ("Preview unavailable", "Preview unavailable"),
+    ("Could not read transfers.", "Could not read transfers."),
+    ("Could not read the attachment.", "Could not read the attachment."),
+    ("Could not delete the local transfer.", "Could not delete the local transfer."),
+    ("Could not copy the image.", "Could not copy the image."),
+    ("Could not reveal the attachment.", "Could not reveal the attachment."),
     ("Assistant shortcut is already in use; choose another shortcut.", "Это сочетание клавиш помощника уже используется; выберите другое."),
     ("Receiving reply", "Получение ответа"),
     ("Voice Assistant", "Голосовой помощник"),
