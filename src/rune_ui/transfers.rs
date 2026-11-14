@@ -163,11 +163,10 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> El {
                 title: entry.title.clone(),
                 meta,
                 meta_ink: None,
-                time: entry
-                    .created_at
-                    .get(5..16)
-                    .unwrap_or(&entry.created_at)
-                    .replace('T', " "),
+                time: {
+                    let stamp = transfers::local_time(&entry.created_at);
+                    stamp.get(5..16).unwrap_or(&stamp).replace('T', " ")
+                },
                 hover: Vec::new(),
                 selected: pane.selected.as_ref() == Some(&id),
             },
@@ -403,7 +402,7 @@ fn detail(ui: &Ui, p: Paint) -> El {
         .shrink()
         .child(ld::card_header(
             ld::card_title(p, &entry.title),
-            vec![ld::meta_text(p, &entry.created_at)],
+            vec![ld::meta_text(p, &transfers::local_time(&entry.created_at))],
             actions,
         ))
         .child(ld::card_scroll(p, "transfer-detail-scroll", body))

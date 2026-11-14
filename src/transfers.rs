@@ -294,6 +294,115 @@ fn list_in(root: &Path) -> Result<Vec<Manifest>> {
     Ok(entries)
 }
 
+/// The manifest records UTC (`…Z`); the pane shows the moment in this
+/// computer's wall clock. Like `screenshots/save.rs`, this is one small
+/// per-module adapter over the C `localtime` functions, with no time crate.
+pub(crate) fn local_time(created_at: &str) -> String {
+    let Some(seconds) = utc_seconds(created_at).filter(|seconds| *seconds >= 0) else {
+        return created_at.to_string();
+    };
+    let seconds = seconds as libc::time_t;
+    // SAFETY: `localtime_r` and `localtime_s` write only into the provided
+    // zeroed `tm`.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    #[cfg(unix)]
+    unsafe {
+        libc::localtime_r(&seconds, &mut tm)
+    };
+    #[cfg(windows)]
+    unsafe {
+        libc::localtime_s(&mut tm, &seconds)
+    };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        tm.tm_year + 1_900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
+}
+
+/// The UTC instant in a manifest timestamp, seconds since the epoch. The
+/// schema's RFC 3339 form is `YYYY-MM-DDTHH:MM:SS(.…)?(Z|±HH:MM)`; anything
+/// else parses as nothing and the pane passes the raw string through.
+fn utc_seconds(created_at: &str) -> Option<i64> {
+    let bytes = created_at.as_bytes();
+    let digits = |range: std::ops::Range<usize>| {
+        let slice = bytes.get(range)?;
+        if slice.iter().all(u8::is_ascii_digit) {
+            std::str::from_utf8(slice).ok()?.parse::<i64>().ok()
+        } else {
+            None
+        }
+    };
+    let year = digits(0..4)?;
+    if bytes.get(4) != Some(&b'-') {
+        return None;
+    }
+    let month = digits(5..7)?;
+    if bytes.get(7) != Some(&b'-') {
+        return None;
+    }
+    let day = digits(8..10)?;
+    if !matches!(bytes.get(10), Some(b'T' | b't' | b' ')) {
+        return None;
+    }
+    let hour = digits(11..13)?;
+    if bytes.get(13) != Some(&b':') {
+        return None;
+    }
+    let minute = digits(14..16)?;
+    if bytes.get(16) != Some(&b':') {
+        return None;
+    }
+    let second = digits(17..19)?;
+    let mut rest = &bytes[19..];
+    if rest.first() == Some(&b'.') {
+        let end = rest[1..]
+            .iter()
+            .position(|b| !b.is_ascii_digit())
+            .map_or(rest.len(), |end| end + 1);
+        rest = &rest[end..];
+    }
+    let offset = match rest {
+        [b'Z' | b'z'] | [] => 0,
+        [sign @ (b'-' | b'+'), h1, h2, b':' | b' ', m1, m2] => {
+            if !(h1.is_ascii_digit()
+                && h2.is_ascii_digit()
+                && m1.is_ascii_digit()
+                && m2.is_ascii_digit())
+            {
+                return None;
+            }
+            let magnitude = i64::from((h1 - b'0') * 10 + (h2 - b'0')) * 3_600
+                + i64::from((m1 - b'0') * 10 + (m2 - b'0')) * 60;
+            if *sign == b'-' { -magnitude } else { magnitude }
+        }
+        _ => return None,
+    };
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    Some(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second - offset)
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_index = (month + 9) % 12;
+    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 pub(crate) fn delete(id: &str) -> Result<()> {
     delete_in(&root()?, id)
 }

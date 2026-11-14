@@ -17,7 +17,7 @@ Share to Hex Mobile                         // transfers.receive
     └── Mac launch or Transfers pane opens → scan the default sync folder, skip receipts and stray files
 
 Open Transfers                              // transfers.inspect
-├── list → kind or attachment count, title, UTC time
+├── list → kind or attachment count, title, local time (the manifest records UTC)
 ├── detail → note, selectable text, image preview when decodable
 ├── Copy / Copy image → clipboard changes only after this action
 ├── Show in Finder → reveal the local image or file

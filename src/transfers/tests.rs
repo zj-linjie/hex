@@ -124,6 +124,29 @@ fn scan_copies_queued_skips_receipts_held_and_incomplete() -> Result<()> {
 }
 
 #[test]
+fn manifest_timestamps_parse_utc_and_render_the_wall_clock() {
+    // Both spellings name the same instant; the wall-clock rendering depends
+    // on this computer's zone, so the machine-independent assertions are the
+    // parsed instants and the unparseable passthrough.
+    assert_eq!(utc_seconds("2026-11-14T02:53:31.575Z"), Some(1_794_624_811));
+    assert_eq!(
+        utc_seconds("2026-11-14T02:53:31.575Z"),
+        utc_seconds("2026-11-14T10:53:31+08:00")
+    );
+    assert_eq!(
+        utc_seconds("2026-11-14T02:53:31.575Z"),
+        utc_seconds("2026-11-13T20:53:31-06:00")
+    );
+    assert_eq!(
+        utc_seconds("2026-11-14T02:53:31.575Z"),
+        utc_seconds("2026-11-14T02:53:31Z")
+    );
+    assert_eq!(utc_seconds("2026-13-14T02:53:31Z"), None);
+    assert_eq!(utc_seconds("not a timestamp"), None);
+    assert_eq!(local_time("not a timestamp"), "not a timestamp");
+}
+
+#[test]
 fn deleting_removes_only_the_mac_copy() -> Result<()> {
     let f = Fixture::new(Status::Queued)?;
     let reply = import_into(&f.source, &f.store)?;
