@@ -98,6 +98,32 @@ fn invalid_schema_missing_file_and_size_mismatch_copy_nothing() -> Result<()> {
     Ok(())
 }
 #[test]
+fn scan_copies_queued_skips_receipts_held_and_incomplete() -> Result<()> {
+    let queued = Fixture::new(Status::Queued)?;
+    let held = Fixture::new(Status::Held)?;
+    let incomplete = Fixture::new(Status::Queued)?;
+    fs::remove_file(incomplete.source.join("body.txt"))?;
+    let sync = queued.base.join("sync");
+    fs::create_dir(&sync)?;
+    fs::rename(&queued.source, sync.join("queued"))?;
+    fs::rename(&held.source, sync.join("held"))?;
+    fs::rename(&incomplete.source, sync.join("incomplete"))?;
+    fs::create_dir(sync.join("receipted"))?;
+    fs::write(sync.join("receipted").join("receipt.json"), b"{}")?;
+    fs::write(sync.join("stray"), b"")?;
+    scan_in(&sync, &queued.store);
+    assert_eq!(fs::read(sync.join("queued").join("body.txt"))?, b"hello");
+    assert!(sync.join("held").join("manifest.json").exists());
+    assert!(sync.join("incomplete").join("manifest.json").exists());
+    assert!(!sync.join("receipted").join("manifest.json").exists());
+    assert_eq!(list_in(&queued.store)?.len(), 1);
+    // A rescan of the same folders imports nothing new.
+    scan_in(&sync, &queued.store);
+    assert_eq!(list_in(&queued.store)?.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn deleting_removes_only_the_mac_copy() -> Result<()> {
     let f = Fixture::new(Status::Queued)?;
     let reply = import_into(&f.source, &f.store)?;

@@ -24,6 +24,8 @@ pub(super) struct TransfersPane {
     pub(super) cache: Option<rune::ImageCache>,
     images: RefCell<HashMap<PathBuf, rune::Image>>,
     #[cfg(target_os = "macos")]
+    scanned: bool,
+    #[cfg(target_os = "macos")]
     grok_bots: Vec<transfers::grok::Bot>,
     #[cfg(target_os = "macos")]
     grok_worker: Option<(String, std::sync::mpsc::Receiver<GrokReply>)>,
@@ -39,6 +41,20 @@ pub(super) fn poll(ui: &mut Ui) -> bool {
     let changed = poll_grok(ui);
     #[cfg(not(target_os = "macos"))]
     let changed = false;
+    // Opening the pane rescans the sync folder, so a transfer queued after
+    // launch is not lost to the startup scan.
+    #[cfg(target_os = "macos")]
+    {
+        let visible = ui.live() && ui.pane == Pane::Transfers && !ui.labs_open;
+        if visible && !ui.transfers.scanned {
+            ui.transfers.scanned = true;
+            let _ = std::thread::Builder::new()
+                .name("hex-transfers-scan".into())
+                .spawn(crate::transfers::scan_default);
+        } else if !visible {
+            ui.transfers.scanned = false;
+        }
+    }
     if !ui.live() || ui.pane != Pane::Transfers || ui.labs_open {
         return changed;
     }

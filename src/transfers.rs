@@ -8,7 +8,7 @@ mod tests;
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,9 +17,16 @@ use color_eyre::eyre::{Result, ensure, eyre};
 use serde::{Deserialize, Serialize};
 
 static WRITE: Mutex<()> = Mutex::new(());
+#[cfg(target_os = "macos")]
+static HYDRATING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 static REVISION: AtomicU64 = AtomicU64::new(1);
 const FILE_LIMIT: u64 = 100 * 1024 * 1024;
 const TOTAL_LIMIT: u64 = 200 * 1024 * 1024;
+/// A dataless file is an iCloud placeholder whose bytes are still in the
+/// cloud; the local copy cannot import until the file provider materializes
+/// it (the `SF_DATALESS` st_flags bit).
+#[cfg(target_os = "macos")]
+const DATALESS: u32 = 0x40000000;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -103,7 +110,7 @@ fn regular(path: &Path) -> Result<File> {
     {
         use std::os::macos::fs::MetadataExt;
         ensure!(
-            before.st_flags() & 0x40000000 == 0,
+            before.st_flags() & DATALESS == 0,
             "iCloud file is not downloaded"
         );
     }
@@ -121,7 +128,7 @@ fn regular(path: &Path) -> Result<File> {
     {
         use std::os::macos::fs::MetadataExt;
         ensure!(
-            meta.st_flags() & 0x40000000 == 0,
+            meta.st_flags() & DATALESS == 0,
             "iCloud file is not downloaded"
         );
     }
@@ -303,23 +310,113 @@ fn delete_in(root: &Path, id: &str) -> Result<()> {
 pub(crate) fn scan_default() {
     if crate::app_settings::AppSettings::read().is_ok_and(|settings| enabled(&settings))
         && let Some(home) = crate::app_paths::home_dir()
-        && let Ok(entries) = fs::read_dir(
-            home.join("Library/Mobile Documents/com~apple~CloudDocs/Hex Mobile/transfers"),
-        )
+        && let Ok(store) = root()
     {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !entry.file_type().is_ok_and(|kind| kind.is_dir())
-                || path.join("receipt.json").exists()
-            {
-                continue;
-            }
-            match import(&path) {
+        scan_in(
+            &home.join("Library/Mobile Documents/com~apple~CloudDocs/Hex Mobile/transfers"),
+            &store,
+        );
+    }
+}
+
+fn scan_in(sync_root: &Path, store: &Path) {
+    let Ok(entries) = fs::read_dir(sync_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) || path.join("receipt.json").exists()
+        {
+            continue;
+        }
+        match import_into(&path, store) {
+            #[cfg(target_os = "macos")]
+            Ok(reply) if reply.imported => macos::notify_if_hidden(),
+            Ok(_) => (),
+            Err(_) => {
+                tracing::debug!("transfer skipped: unavailable or invalid");
+                // A dataless attachment is the one recoverable refusal: ask
+                // the file provider for the bytes and import when they land.
                 #[cfg(target_os = "macos")]
-                Ok(reply) if reply.imported => macos::notify_if_hidden(),
-                Ok(_) => (),
-                Err(_) => tracing::debug!("transfer skipped: unavailable or invalid"),
+                if !dataless_files(&path).is_empty() {
+                    hydrate(&path, store);
+                }
             }
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn dataless(path: &Path) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file() && meta.st_flags() & DATALESS != 0)
+}
+
+#[cfg(target_os = "macos")]
+fn dataless_files(source: &Path) -> Vec<PathBuf> {
+    fs::read_dir(source)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| dataless(path))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One download attempt at a time per transfer folder, so repeated scans
+/// while a file downloads never stack hydration threads.
+#[cfg(target_os = "macos")]
+fn hydrate(source: &Path, store: &Path) {
+    let key = source.to_path_buf();
+    let Ok(mut hydrating) = HYDRATING.lock() else {
+        return;
+    };
+    if hydrating.contains(&key) {
+        return;
+    }
+    let started = std::thread::Builder::new()
+        .name("hex-transfers-hydrate".into())
+        .spawn({
+            let key = key.clone();
+            let store = store.to_path_buf();
+            move || {
+                for file in dataless_files(&key) {
+                    materialize(&file);
+                }
+                if let Ok(mut hydrating) = HYDRATING.lock() {
+                    hydrating.retain(|path| path != &key);
+                }
+                match import_into(&key, &store) {
+                    Ok(reply) if reply.imported => macos::notify_if_hidden(),
+                    Ok(_) => (),
+                    Err(_) => tracing::debug!("transfer skipped: unavailable or invalid"),
+                }
+            }
+        });
+    if started.is_err() {
+        hydrating.retain(|path| path != &key);
+    }
+}
+
+/// Reading the first and last byte asks the file provider to fetch the whole
+/// file; without a read, "Optimize Mac Storage" may keep the placeholder on
+/// disk forever. The read may block for the whole download, so it runs only
+/// on the hydration thread.
+#[cfg(target_os = "macos")]
+fn materialize(path: &Path) {
+    let Ok(mut file) = File::open(path) else {
+        return;
+    };
+    let end = match file.metadata() {
+        Ok(meta) => meta.len().saturating_sub(1),
+        Err(_) => return,
+    };
+    if file.seek(std::io::SeekFrom::Start(end)).is_err() {
+        return;
+    }
+    let _ = file.read_exact(&mut [0; 1]);
+    let _ = file.seek(std::io::SeekFrom::Start(0));
+    let _ = file.read_exact(&mut [0; 1]);
 }

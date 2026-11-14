@@ -13,7 +13,8 @@ Share to Hex Mobile                         // transfers.receive
     ├── running Hex + CLI import → private local copy, pane refresh
     ├── same manifest UUID → already, no duplicate bytes
     ├── missing/versioned/partial attachment → refuse; no published half-copy
-    └── Mac launch → scan default sync folder, skip receipts and placeholders
+    ├── dataless iCloud attachment → ask the file provider to download, import when the bytes land
+    └── Mac launch or Transfers pane opens → scan the default sync folder, skip receipts and stray files
 
 Open Transfers                              // transfers.inspect
 ├── list → kind or attachment count, title, UTC time
@@ -39,9 +40,15 @@ writes the clipboard and never logs payload text.
 When an item is imported while Transfers is not the visible pane, Hex asks
 macOS to deliver one local notification, with generic text. Notification
 presentation remains subject to macOS notification settings. No APNs or
-application network transport is involved. The default scan uses iCloud
-Drive's `Hex Mobile/transfers` folder; a missing folder is an empty inbox.
-Custom folders are imported only by the [CLI](../cli.md#mobile-transfers-macos-labs).
+application network transport is involved. The default scan runs at launch
+and again whenever the Transfers pane becomes visible; it uses iCloud
+Drive's `Hex Mobile/transfers` folder, and a missing folder is an empty
+inbox. A queued folder whose attachments are dataless iCloud placeholders
+is refused like any partial transfer, and the scan then reads the first and
+last byte of each placeholder on a background thread to ask the file
+provider to download them; when the bytes land the folder imports by
+itself, one download attempt at a time per folder. Custom folders are
+imported only by the [CLI](../cli.md#mobile-transfers-macos-labs).
 Hex does not write `receipt.json`; the external sync script owns the receipt
 and the Mobile app's delivered summary and cloud cleanup.
 
@@ -73,15 +80,18 @@ for the new strings.
 
 `src/transfers/tests.rs` exercises held/no-copy, queued/copy-once, duplicate
 import, schema 2, missing schema, missing attachment, size mismatch, unsafe
-names, symlinks, owner-only modes, and deletion preserving the source copy.
-Grok fixtures cover recipient selection, regular-file copying without source
-deletion, fresh IDs, absent/invalid configuration with no Ready directory,
-symlink refusal, body text without file duplication, and payload limits.
+names, symlinks, owner-only modes, deletion preserving the source copy, and
+the sync-folder scan (queued copies, receipts, held, incomplete folders and
+stray files skip or refuse, and a rescan imports nothing new). Grok fixtures
+cover recipient selection, regular-file copying without source deletion,
+fresh IDs, absent/invalid configuration with no Ready directory, symlink
+refusal, body text without file duplication, and payload limits.
 Executed results belong in the implementation handoff; the presence of these
 tests alone is not a passing run.
 
 Not device-verified: Notes/Photos/Files sharing, iCloud hydration and transfer
-latency, launchd receipt round-trip, native selectable-text interaction,
+latency, the pane-open rescan and first-and-last-byte hydration of a real
+placeholder, launchd receipt round-trip, native selectable-text interaction,
 image preview/copy for every supported UTI, Finder reveal, macOS notification
 presentation, or dictation/keyboard/vocabulary regressions on the paired
 phone and Mac, or Grok Bot Anywhere ingestion/composer activation. The preview uses Rune's decoder; an unsupported image displays
